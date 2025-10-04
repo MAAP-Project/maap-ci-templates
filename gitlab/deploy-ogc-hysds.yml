@@ -1,0 +1,246 @@
+image: python:3.12
+
+variables:
+  DPS_REGISTRY: ${HYSDS_DOCKER_REGISTRY}
+  S3_BUCKET: ${MAAP_CODE_BUCKET}
+  S3_REGION: us-west-2
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+cache:
+  paths:
+    - .cache/pip
+
+stages:
+  - validate
+  - download_artifacts
+  - convert_to_hysds
+  - deploy_to_hysds
+
+validate:
+  stage: validate
+  image: python:3.12
+  script:
+    - pip install ogc_ap_validator==0.5.0 pyyaml
+    - set -e
+    - ap-validator "$CWL_URL"
+    - echo "Downloading CWL file from $CWL_URL"
+    - curl -L "$CWL_URL" -o process.cwl
+    # Extract version tag from CWL file
+    - export TAG=$(grep 's:version:' process.cwl | sed 's/.*s:version:[[:space:]]*//')
+    - |
+      if [ -z "$TAG" ]; then
+        echo "ERROR: Failed to extract version tag from CWL file"
+        exit 1
+      fi
+    - echo "Extracted version TAG: $TAG"
+    - CWL_FILE_NAME="$PROCESS_NAME_HYSDS.$TAG.process.cwl"
+    - echo "CWL Filename is $CWL_FILE_NAME"
+    - mv process.cwl "$CWL_FILE_NAME"
+    - mkdir -p workspace
+    - mv "$CWL_FILE_NAME" workspace/
+    - echo "CWL_FILE_NAME=${CWL_FILE_NAME}" >> build.env
+    - echo "TAG=${TAG}" >> build.env
+  artifacts:
+    paths:
+      - workspace/
+    reports:
+      dotenv: build.env
+  tags:
+    - docker
+  only:
+    - main
+
+download:
+  stage: download_artifacts
+  dependencies:
+    - validate
+  before_script:
+    - docker info
+    - |
+      if [ "$(docker ps -q -f name=registry)" = "" ]; then
+        if [ "$(docker ps -aq -f status=exited -f name=registry)" != "" ]; then
+          echo "Starting existing stopped registry container..."
+          docker start registry
+        else
+          echo "Starting new Docker registry on port 5000..."
+          docker run -p 5050:5000 -e REGISTRY_STORAGE=s3 -e REGISTRY_STORAGE_S3_BUCKET="${MAAP_CODE_BUCKET}" \
+                    -e REGISTRY_STORAGE_S3_REGION="${S3_REGION}" --name=registry -d --restart=always registry:2
+        fi
+      else
+        echo "Docker registry is already running."
+      fi
+  script:
+    # Parse Docker image from CWL file
+    - echo "Parsing Docker image from workspace/$CWL_FILE_NAME"
+    - export DOCKER_IMAGE=$(grep 'dockerPull:' "workspace/$CWL_FILE_NAME" | awk '{print $2}' | head -n 1)
+    - |
+      if [ -z "$DOCKER_IMAGE" ]; then
+        echo "ERROR: Failed to extract Docker image from CWL file"
+        exit 1
+      fi
+    - echo "Docker image found: $DOCKER_IMAGE"
+    # Pull and retag Docker image
+    - docker pull "$DOCKER_IMAGE"
+    - NEW_IMAGE_NAME=$(echo "$DOCKER_IMAGE" | sed -E 's|^([^/:]+[.][^/]+)/||')
+    - docker rmi "$DPS_REGISTRY/$NEW_IMAGE_NAME" || true
+    - docker tag "$DOCKER_IMAGE" "$DPS_REGISTRY/$NEW_IMAGE_NAME"
+    # Push to registry and verify success
+    - docker push "$DPS_REGISTRY/$NEW_IMAGE_NAME"
+    - |
+      echo "Verifying image was pushed to registry..."
+      if docker manifest inspect "$DPS_REGISTRY/$NEW_IMAGE_NAME" > /dev/null 2>&1; then
+        echo "✓ Successfully verified image in registry: $DPS_REGISTRY/$NEW_IMAGE_NAME"
+      else
+        echo "⚠ Initial verification failed, retrying push once..."
+        docker push "$DPS_REGISTRY/$NEW_IMAGE_NAME"
+        if docker manifest inspect "$DPS_REGISTRY/$NEW_IMAGE_NAME" > /dev/null 2>&1; then
+          echo "✓ Successfully verified image in registry after retry: $DPS_REGISTRY/$NEW_IMAGE_NAME"
+        else
+          echo "ERROR: Failed to verify image in registry after retry"
+          exit 1
+        fi
+      fi
+    # Update CWL file with new registry URL
+    - echo "Replacing dockerPull URL to $DPS_REGISTRY IMAGE"
+    - cp "workspace/$CWL_FILE_NAME" "workspace/${CWL_FILE_NAME}.bak"
+    - sed -i -E "s|dockerPull:\ *$DOCKER_IMAGE|dockerPull:\ $DPS_REGISTRY/$NEW_IMAGE_NAME|" "workspace/$CWL_FILE_NAME"
+    # Save artifact metadata
+    - echo "$DPS_REGISTRY/$NEW_IMAGE_NAME" | tee workspace/docker_url.txt
+  artifacts:
+    paths:
+      - workspace/
+  tags:
+    - shell
+  only:
+    - main
+
+generate_hysds_specs:
+  stage: convert_to_hysds
+  dependencies:
+    - download
+    - validate
+  image: python:3.12
+  before_script:
+    # Use shallow clone for faster checkout
+    - git clone --depth 1 https://github.com/MAAP-Project/hysds-ogc-container-builder.git
+    - cd hysds-ogc-container-builder
+    - pip install -r requirements.txt
+  script:
+    - pip install awscli
+    - export CONTAINER_URL=$(cat workspace/docker_url.txt)
+    - echo "Uploading $CWL_FILE_NAME to S3 bucket $S3_BUCKET"
+    - aws s3 cp "workspace/$CWL_FILE_NAME" "s3://$S3_BUCKET/ogc-app-pack/$CWL_FILE_NAME"
+    - CWL_FILE_URI="s3://$S3_BUCKET/ogc-app-pack/$CWL_FILE_NAME"
+    # Convert CWL to HySDS specifications (using registry URL)
+    - python -m utils.cwl_to_hysds "workspace/${CWL_FILE_NAME}" "${CONTAINER_URL}" "${PROCESS_NAME_HYSDS}"
+    - mv hysds-io.json* workspace/
+    - mv job-spec.json* workspace/
+    # Update job-spec with DPS wrapper command
+    - export JOB_SPEC_PATH=$(ls -d workspace/job-spec.json*)
+    - python -c "import json; f='${JOB_SPEC_PATH}'; d=json.load(open(f)); d['command'] = '/app/dps_wrapper.sh ${CWL_FILE_URI}'; json.dump(d, open(f, 'w'), indent=2)"
+  artifacts:
+    paths:
+      - workspace/
+  tags:
+    - docker
+  only:
+    - main
+
+deploy_to_hysds:
+  stage: deploy_to_hysds
+  dependencies:
+    - generate_hysds_specs
+  script:
+    - set -e
+    - export JOB_SPEC_PATH=$(ls -d workspace/job-spec.json*)
+    - export HYSDS_IO_PATH=$(ls -d workspace/hysds-io.json*)
+    - export CWL_PATH=$(ls -d workspace/*.cwl)
+    # Use TAG from dotenv artifact instead of re-extracting
+    - echo "Using TAG from previous stage: $TAG"
+    - VERDI_IMAGE=hysds/verdi:v5.2.0
+    # Check if verdi image exists locally, only pull if needed
+    - |
+      if ! docker image inspect ${VERDI_IMAGE} > /dev/null 2>&1; then
+        echo "Pulling ${VERDI_IMAGE}..."
+        docker pull ${VERDI_IMAGE}
+      else
+        echo "Using cached ${VERDI_IMAGE}"
+      fi
+    # Inline build-ogc.sh script for self-contained template
+    - |
+      docker run -u 0:0 --entrypoint=/bin/bash \
+      -v /var/run/docker.sock:/var/run/docker.sock:ro -v ${PWD}:${PWD} -w ${PWD} \
+      -e specification=$JOB_SPEC_PATH -e wiring=$HYSDS_IO_PATH -e TAG=$TAG -e NAME=$PROCESS_NAME_HYSDS \
+      -e MAAP_PRIVATE_REGISTRY_TOKEN=$MAAP_PRIVATE_REGISTRY_TOKEN \
+      -e MAAP_OGC_EXECUTOR_CONTAINER_NAME=$MAAP_OGC_EXECUTOR_CONTAINER_NAME \
+      -e MAAP_OGC_EXECUTOR_CONTAINER_VERSION=$MAAP_OGC_EXECUTOR_CONTAINER_VERSION \
+      -e MAAP_OGC_EXECUTOR_CONTAINER_URL=$MAAP_OGC_EXECUTOR_CONTAINER_URL \
+      -e MAAP_PRIVATE_DOCKER_REGISTRY=$MAAP_PRIVATE_DOCKER_REGISTRY \
+      -e MOZART_REST_URL=$MOZART_REST_URL \
+      -e STORAGE=$STORAGE \
+      -e GRQ_REST_URL=$GRQ_REST_URL \
+      -e DPS_REGISTRY=$DPS_REGISTRY \
+      ${VERDI_IMAGE} -c '
+      set -e
+      source /home/ops/verdi/bin/activate
+      set -x
+
+      # Validate required variables
+      if [ -z "$MAAP_OGC_EXECUTOR_CONTAINER_NAME" ] || [ -z "$MAAP_OGC_EXECUTOR_CONTAINER_VERSION" ]; then
+        echo "ERROR: MAAP_OGC_EXECUTOR_CONTAINER_NAME or MAAP_OGC_EXECUTOR_CONTAINER_VERSION not set"
+        exit 1
+      fi
+
+      echo "Building with $MAAP_OGC_EXECUTOR_CONTAINER_NAME:$MAAP_OGC_EXECUTOR_CONTAINER_VERSION"
+
+      # Login to private registry to pull MAAP executor image
+      echo "$MAAP_PRIVATE_REGISTRY_TOKEN" | docker login ${MAAP_PRIVATE_DOCKER_REGISTRY} -u gitlab-ci-token --password-stdin
+
+      CONTAINER="container-${MAAP_OGC_EXECUTOR_CONTAINER_NAME}:${MAAP_OGC_EXECUTOR_CONTAINER_VERSION}"
+      DOCKER_URL="${DPS_REGISTRY}/${CONTAINER}"
+
+      # Check if container already exists in HySDS
+      HTTP_CODE=$(curl -k -X "GET" -s -o /dev/null -w "%{http_code}" \
+        "${MOZART_REST_URL}/container/info?id=${CONTAINER}" \
+        -H "accept: application/json")
+
+      if [ "$HTTP_CODE" -eq 200 ]; then
+        echo "Success: ${MAAP_OGC_EXECUTOR_CONTAINER_NAME} Container already exists"
+      else
+        echo "Container not found (HTTP $HTTP_CODE), registering new container..."
+        # Docker tags must be lowercase
+        CONTAINER=${CONTAINER,,}
+        TAR="${CONTAINER}.tar"
+        GZ="${TAR}.gz"
+
+        # Pull, tag, and push executor container
+        docker pull "${MAAP_OGC_EXECUTOR_CONTAINER_URL}"
+        docker tag "${MAAP_OGC_EXECUTOR_CONTAINER_URL}" "${DOCKER_URL}"
+        docker push "${DOCKER_URL}"
+
+        # Save and compress container
+        docker save -o "./${TAR}" "${DOCKER_URL}"
+        pigz -f "./${TAR}"
+
+        # Register container with HySDS
+        digest=$(docker inspect --format="{{index .Id}}" "${DOCKER_URL}" | cut -d"@" -f 2)
+        /home/ops/verdi/ops/container-builder/container-met.py "${CONTAINER}" "${MAAP_OGC_EXECUTOR_CONTAINER_VERSION}" "${GZ}" "${STORAGE}" "${digest}" "${MOZART_REST_URL}"
+        rm -f "${GZ}"
+      fi
+
+      # Register job specification
+      JOB_SPEC="job-${NAME}:${TAG}"
+      echo "Running Job-Met on: ${CONTAINER} ${specification} ${TAG} ${JOB_SPEC}"
+      /home/ops/verdi/ops/container-builder/job-met.py "${specification}" "${CONTAINER}" "${TAG}" "${MOZART_REST_URL}" "${STORAGE}"
+
+      # Register HySDS I/O specification
+      HYSDS_IO="hysds-io-${NAME}:${TAG}"
+      echo "Running IO-Met on: ${CONTAINER} ${wiring} ${TAG} ${HYSDS_IO}"
+      /home/ops/verdi/ops/container-builder/io-met.py "${wiring}" "${JOB_SPEC}" "${TAG}" "${MOZART_REST_URL}" "${GRQ_REST_URL}"
+      '
+  tags:
+    - shell
+  only:
+   - main
+
+
