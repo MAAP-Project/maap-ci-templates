@@ -29,10 +29,10 @@ validate:
     - export TAG=$(grep 's:version:' process.cwl | sed 's/.*s:version:[[:space:]]*//')
     - |
       if [ -z "$TAG" ]; then
-        echo "ERROR: Failed to extract version tag from CWL file"
+        echo "ERROR Failed to extract version tag from CWL file"
         exit 1
       fi
-    - echo "Extracted version TAG: $TAG"
+    - echo "Extracted version TAG $TAG"
     - CWL_FILE_NAME="$PROCESS_NAME_HYSDS.$TAG.process.cwl"
     - echo "CWL Filename is $CWL_FILE_NAME"
     - mv process.cwl "$CWL_FILE_NAME"
@@ -75,10 +75,10 @@ download:
     - export DOCKER_IMAGE=$(grep 'dockerPull:' "workspace/$CWL_FILE_NAME" | awk '{print $2}' | head -n 1)
     - |
       if [ -z "$DOCKER_IMAGE" ]; then
-        echo "ERROR: Failed to extract Docker image from CWL file"
+        echo "ERROR Failed to extract Docker image from CWL file"
         exit 1
       fi
-    - echo "Docker image found: $DOCKER_IMAGE"
+    - echo "Docker image found $DOCKER_IMAGE"
     # Pull and retag Docker image
     - docker pull "$DOCKER_IMAGE"
     - NEW_IMAGE_NAME=$(echo "$DOCKER_IMAGE" | sed -E 's|^([^/:]+[.][^/]+)/||')
@@ -156,7 +156,7 @@ deploy_to_hysds:
     - export HYSDS_IO_PATH=$(ls -d workspace/hysds-io.json*)
     - export CWL_PATH=$(ls -d workspace/*.cwl)
     # Use TAG from dotenv artifact instead of re-extracting
-    - echo "Using TAG from previous stage: $TAG"
+    - echo "Using TAG from previous stage $TAG"
     - VERDI_IMAGE=hysds/verdi:v5.2.0
     # Check if verdi image exists locally, only pull if needed
     - |
