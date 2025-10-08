@@ -132,7 +132,7 @@ generate_hysds_specs:
     - aws s3 cp "workspace/$CWL_FILE_NAME" "s3://$S3_BUCKET/ogc-app-pack/$CWL_FILE_NAME"
     - CWL_FILE_URI="s3://$S3_BUCKET/ogc-app-pack/$CWL_FILE_NAME"
     # Convert CWL to HySDS specifications (using registry URL)
-    - python -m utils.cwl_to_hysds "workspace/${CWL_FILE_NAME}" "${CONTAINER_URL}" "${PROCESS_NAME_HYSDS}"
+    - python -m utils.cwl_to_hysds "workspace/${CWL_FILE_NAME}" "${PROCESS_NAME_HYSDS}" --docker-uri "${CONTAINER_URL}"
     - mv hysds-io.json* workspace/
     - mv job-spec.json* workspace/
     # Update job-spec with DPS wrapper command
