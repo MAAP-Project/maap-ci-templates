@@ -87,6 +87,7 @@ download:
     # Push to registry and verify success
     - |
       echo "Pushing image and verifying digest..."
+      docker push "$DPS_REGISTRY/$NEW_IMAGE_NAME"
       
       # Push image and capture digest
       PUSH_DIGEST=$(docker inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' "$DPS_REGISTRY/$NEW_IMAGE_NAME" | grep "^$DPS_REGISTRY/${NEW_IMAGE_NAME%:*}@" | awk -F@ '{print $2}')
