@@ -85,18 +85,34 @@ download:
     - docker rmi "$DPS_REGISTRY/$NEW_IMAGE_NAME" || true
     - docker tag "$DOCKER_IMAGE" "$DPS_REGISTRY/$NEW_IMAGE_NAME"
     # Push to registry and verify success
-    - docker push "$DPS_REGISTRY/$NEW_IMAGE_NAME"
     - |
-      echo "Verifying image was pushed to registry..."
-      if docker manifest inspect "$DPS_REGISTRY/$NEW_IMAGE_NAME" > /dev/null 2>&1; then
-        echo "✓ Successfully verified image in registry: $DPS_REGISTRY/$NEW_IMAGE_NAME"
+      echo "Pushing image and verifying digest..."
+      
+      # Push image and capture digest
+      PUSH_DIGEST=$(docker push "$DPS_REGISTRY/$NEW_IMAGE_NAME" | tee /dev/stderr | grep digest | awk '{print $NF}')
+      echo "✓ Push digest $PUSH_DIGEST"
+
+      # Construct registry manifest URL
+      MANIFEST_URL="http://$DPS_REGISTRY/v2/${NEW_IMAGE_NAME%:*}/manifests/${NEW_IMAGE_NAME##*:}"
+
+      # Fetch digest from registry
+      REGISTRY_DIGEST=$(curl -sI -H "Accept: application/vnd.docker.distribution.manifest.v2+json" "$MANIFEST_URL" \
+                        | grep -i "Docker-Content-Digest" | awk '{print $2}' | tr -d $'\r')
+      echo "✓ Registry digest $REGISTRY_DIGEST"
+
+      # Compare digests
+      if [ "$PUSH_DIGEST" = "$REGISTRY_DIGEST" ]; then
+        echo "Digests match! Image successfully pushed $DPS_REGISTRY/$NEW_IMAGE_NAME"
       else
-        echo "⚠ Initial verification failed, retrying push once..."
-        docker push "$DPS_REGISTRY/$NEW_IMAGE_NAME"
-        if docker manifest inspect "$DPS_REGISTRY/$NEW_IMAGE_NAME" > /dev/null 2>&1; then
-          echo "✓ Successfully verified image in registry after retry: $DPS_REGISTRY/$NEW_IMAGE_NAME"
+        echo "ERROR Digests do not match! Push digest: $PUSH_DIGEST, Registry digest: $REGISTRY_DIGEST"
+        echo "Retrying push once..."
+        PUSH_DIGEST=$(docker push "$DPS_REGISTRY/$NEW_IMAGE_NAME" | tee /dev/stderr | grep digest | awk '{print $NF}')
+        REGISTRY_DIGEST=$(curl -sI -H "Accept: application/vnd.docker.distribution.manifest.v2+json" "$MANIFEST_URL" \
+                          | grep -i "Docker-Content-Digest" | awk '{print $2}' | tr -d $'\r')
+        if [ "$PUSH_DIGEST" = "$REGISTRY_DIGEST" ]; then
+          echo "Digests match after retry!"
         else
-          echo "ERROR: Failed to verify image in registry after retry"
+          echo "ERROR Digests still do not match after retry. Aborting."
           exit 1
         fi
       fi
