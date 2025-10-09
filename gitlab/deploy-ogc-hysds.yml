@@ -138,6 +138,9 @@ generate_hysds_specs:
     - validate
   image: python:3.12
   before_script:
+    # Check artifacts exist
+    - ls -R workspace/
+    - cat workspace/docker_url.txt
     # Use shallow clone for faster checkout
     - git clone --depth 1 https://github.com/MAAP-Project/hysds-ogc-container-builder.git
     - cd hysds-ogc-container-builder
@@ -167,6 +170,10 @@ deploy_to_hysds:
   stage: deploy_to_hysds
   dependencies:
     - generate_hysds_specs
+  before_script:
+    # Check artifacts exist
+    - ls -R workspace/
+    - cat workspace/docker_url.txt
   script:
     - set -e
     - export JOB_SPEC_PATH=$(ls -d workspace/job-spec.json*)
