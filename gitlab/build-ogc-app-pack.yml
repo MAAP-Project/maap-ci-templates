@@ -30,7 +30,7 @@ build_image:
 
       WORKDIR /app
 
-      RUN git clone --single-branch --branch ${BRANCH_REF} ${REPOSITORY_URL}
+      RUN git clone --depth 1 --single-branch --branch ${BRANCH_REF} ${REPOSITORY_URL}
       RUN bash ${BUILD_CMD} && conda clean -afy
 
       CMD ["/bin/bash"]
