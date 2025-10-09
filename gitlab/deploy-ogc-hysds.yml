@@ -89,7 +89,7 @@ download:
       echo "Pushing image and verifying digest..."
       
       # Push image and capture digest
-      PUSH_DIGEST=$(docker push "$DPS_REGISTRY/$NEW_IMAGE_NAME" 2>&1 | grep digest | awk '{print $NF}')
+      PUSH_DIGEST=$(docker inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' "$DPS_REGISTRY/$NEW_IMAGE_NAME" | grep "^$DPS_REGISTRY/${NEW_IMAGE_NAME%:*}@" | awk -F@ '{print $2}')
       echo "✓ Push digest $PUSH_DIGEST"
 
       # Construct registry manifest URL
@@ -106,7 +106,7 @@ download:
       else
         echo "ERROR Digests do not match! Push digest: $PUSH_DIGEST, Registry digest: $REGISTRY_DIGEST"
         echo "Retrying push once..."
-        PUSH_DIGEST=$(docker push "$DPS_REGISTRY/$NEW_IMAGE_NAME" 2>&1 | grep digest | awk '{print $NF}')
+        PUSH_DIGEST=$(docker inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' "$DPS_REGISTRY/$NEW_IMAGE_NAME" | grep "^$DPS_REGISTRY/${NEW_IMAGE_NAME%:*}@" | awk -F@ '{print $2}')
         REGISTRY_DIGEST=$(curl -sI -H "Accept: application/vnd.docker.distribution.manifest.v2+json" "$MANIFEST_URL" \
                           | grep -i "Docker-Content-Digest" | awk '{print $2}' | tr -d $'\r')
         if [ "$PUSH_DIGEST" = "$REGISTRY_DIGEST" ]; then
