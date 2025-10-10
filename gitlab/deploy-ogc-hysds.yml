@@ -168,6 +168,9 @@ generate_hysds_specs:
 
 deploy_to_hysds:
   stage: deploy_to_hysds
+  image: docker:28.5.1
+  services:
+    - docker:28.5.1-dind
   dependencies:
     - generate_hysds_specs
   before_script:
@@ -262,7 +265,7 @@ deploy_to_hysds:
       /home/ops/verdi/ops/container-builder/io-met.py "${wiring}" "${JOB_SPEC}" "${TAG}" "${MOZART_REST_URL}" "${GRQ_REST_URL}"
       '
   tags:
-    - shell
+    - docker
   only:
    - main
 
