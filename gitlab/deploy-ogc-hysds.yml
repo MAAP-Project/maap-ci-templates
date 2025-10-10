@@ -29,10 +29,10 @@ validate:
     - export TAG=$(grep 's:version:' process.cwl | sed 's/.*s:version:[[:space:]]*//')
     - |
       if [ -z "$TAG" ]; then
-        echo "ERROR: Failed to extract version tag from CWL file"
+        echo "ERROR Failed to extract version tag from CWL file"
         exit 1
       fi
-    - echo "Extracted version TAG: $TAG"
+    - echo "Extracted version TAG $TAG"
     - CWL_FILE_NAME="$PROCESS_NAME_HYSDS.$TAG.process.cwl"
     - echo "CWL Filename is $CWL_FILE_NAME"
     - mv process.cwl "$CWL_FILE_NAME"
@@ -75,28 +75,45 @@ download:
     - export DOCKER_IMAGE=$(grep 'dockerPull:' "workspace/$CWL_FILE_NAME" | awk '{print $2}' | head -n 1)
     - |
       if [ -z "$DOCKER_IMAGE" ]; then
-        echo "ERROR: Failed to extract Docker image from CWL file"
+        echo "ERROR Failed to extract Docker image from CWL file"
         exit 1
       fi
-    - echo "Docker image found: $DOCKER_IMAGE"
+    - echo "Docker image found $DOCKER_IMAGE"
     # Pull and retag Docker image
     - docker pull "$DOCKER_IMAGE"
     - NEW_IMAGE_NAME=$(echo "$DOCKER_IMAGE" | sed -E 's|^([^/:]+[.][^/]+)/||')
     - docker rmi "$DPS_REGISTRY/$NEW_IMAGE_NAME" || true
     - docker tag "$DOCKER_IMAGE" "$DPS_REGISTRY/$NEW_IMAGE_NAME"
     # Push to registry and verify success
-    - docker push "$DPS_REGISTRY/$NEW_IMAGE_NAME"
     - |
-      echo "Verifying image was pushed to registry..."
-      if docker manifest inspect "$DPS_REGISTRY/$NEW_IMAGE_NAME" > /dev/null 2>&1; then
-        echo "✓ Successfully verified image in registry: $DPS_REGISTRY/$NEW_IMAGE_NAME"
+      echo "Pushing image and verifying digest..."
+      docker push "$DPS_REGISTRY/$NEW_IMAGE_NAME"
+      
+      # Push image and capture digest
+      PUSH_DIGEST=$(docker inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' "$DPS_REGISTRY/$NEW_IMAGE_NAME" | grep "^$DPS_REGISTRY/${NEW_IMAGE_NAME%:*}@" | awk -F@ '{print $2}')
+      echo "✓ Push digest $PUSH_DIGEST"
+
+      # Construct registry manifest URL
+      MANIFEST_URL="http://$DPS_REGISTRY/v2/${NEW_IMAGE_NAME%:*}/manifests/${NEW_IMAGE_NAME##*:}"
+
+      # Fetch digest from registry
+      REGISTRY_DIGEST=$(curl -sI -H "Accept: application/vnd.docker.distribution.manifest.v2+json" "$MANIFEST_URL" \
+                        | grep -i "Docker-Content-Digest" | awk '{print $2}' | tr -d $'\r')
+      echo "✓ Registry digest $REGISTRY_DIGEST"
+
+      # Compare digests
+      if [ "$PUSH_DIGEST" = "$REGISTRY_DIGEST" ]; then
+        echo "Digests match! Image successfully pushed $DPS_REGISTRY/$NEW_IMAGE_NAME"
       else
-        echo "⚠ Initial verification failed, retrying push once..."
-        docker push "$DPS_REGISTRY/$NEW_IMAGE_NAME"
-        if docker manifest inspect "$DPS_REGISTRY/$NEW_IMAGE_NAME" > /dev/null 2>&1; then
-          echo "✓ Successfully verified image in registry after retry: $DPS_REGISTRY/$NEW_IMAGE_NAME"
+        echo "ERROR Digests do not match! Push digest: $PUSH_DIGEST, Registry digest: $REGISTRY_DIGEST"
+        echo "Retrying push once..."
+        PUSH_DIGEST=$(docker inspect --format='{{range .RepoDigests}}{{println .}}{{end}}' "$DPS_REGISTRY/$NEW_IMAGE_NAME" | grep "^$DPS_REGISTRY/${NEW_IMAGE_NAME%:*}@" | awk -F@ '{print $2}')
+        REGISTRY_DIGEST=$(curl -sI -H "Accept: application/vnd.docker.distribution.manifest.v2+json" "$MANIFEST_URL" \
+                          | grep -i "Docker-Content-Digest" | awk '{print $2}' | tr -d $'\r')
+        if [ "$PUSH_DIGEST" = "$REGISTRY_DIGEST" ]; then
+          echo "Digests match after retry!"
         else
-          echo "ERROR: Failed to verify image in registry after retry"
+          echo "ERROR Digests still do not match after retry. Aborting."
           exit 1
         fi
       fi
@@ -121,22 +138,25 @@ generate_hysds_specs:
     - validate
   image: python:3.12
   before_script:
+    # Check artifacts exist
+    - ls -R ${CI_PROJECT_DIR}/workspace/
+    - cat ${CI_PROJECT_DIR}/workspace/docker_url.txt
     # Use shallow clone for faster checkout
     - git clone --depth 1 https://github.com/MAAP-Project/hysds-ogc-container-builder.git
-    - cd hysds-ogc-container-builder
-    - pip install -r requirements.txt
+    - pip install -r hysds-ogc-container-builder/requirements.txt
   script:
     - pip install awscli
-    - export CONTAINER_URL=$(cat workspace/docker_url.txt)
+    - export CONTAINER_URL=$(cat ${CI_PROJECT_DIR}/workspace/docker_url.txt)
     - echo "Uploading $CWL_FILE_NAME to S3 bucket $S3_BUCKET"
-    - aws s3 cp "workspace/$CWL_FILE_NAME" "s3://$S3_BUCKET/ogc-app-pack/$CWL_FILE_NAME"
+    - aws s3 cp "${CI_PROJECT_DIR}/workspace/$CWL_FILE_NAME" "s3://$S3_BUCKET/ogc-app-pack/$CWL_FILE_NAME"
     - CWL_FILE_URI="s3://$S3_BUCKET/ogc-app-pack/$CWL_FILE_NAME"
     # Convert CWL to HySDS specifications (using registry URL)
-    - python -m utils.cwl_to_hysds "workspace/${CWL_FILE_NAME}" "${PROCESS_NAME_HYSDS}" --docker-uri "${CONTAINER_URL}"
-    - mv hysds-io.json* workspace/
-    - mv job-spec.json* workspace/
+    - export PYTHONPATH="${CI_PROJECT_DIR}/hysds-ogc-container-builder:$PYTHONPATH"
+    - python -m utils.cwl_to_hysds "$CI_PROJECT_DIR/workspace/${CWL_FILE_NAME}" "${PROCESS_NAME_HYSDS}" --docker-uri "${CONTAINER_URL}"
+    - mv hysds-io.json* "$CI_PROJECT_DIR/workspace/"
+    - mv job-spec.json* "$CI_PROJECT_DIR/workspace/"
     # Update job-spec with DPS wrapper command
-    - export JOB_SPEC_PATH=$(ls -d workspace/job-spec.json*)
+    - export JOB_SPEC_PATH=$(ls -d "$CI_PROJECT_DIR/workspace/job-spec.json"*)
     - python -c "import json; f='${JOB_SPEC_PATH}'; d=json.load(open(f)); d['command'] = '/app/dps_wrapper.sh ${CWL_FILE_URI}'; json.dump(d, open(f, 'w'), indent=2)"
   artifacts:
     paths:
@@ -150,13 +170,16 @@ deploy_to_hysds:
   stage: deploy_to_hysds
   dependencies:
     - generate_hysds_specs
+  before_script:
+    # Check artifacts exist
+    - ls -R ${CI_PROJECT_DIR}/workspace/
   script:
     - set -e
-    - export JOB_SPEC_PATH=$(ls -d workspace/job-spec.json*)
-    - export HYSDS_IO_PATH=$(ls -d workspace/hysds-io.json*)
-    - export CWL_PATH=$(ls -d workspace/*.cwl)
+    - export JOB_SPEC_PATH=$(ls -d ${CI_PROJECT_DIR}/workspace/job-spec.json*)
+    - export HYSDS_IO_PATH=$(ls -d ${CI_PROJECT_DIR}/workspace/hysds-io.json*)
+    - export CWL_PATH=$(ls -d ${CI_PROJECT_DIR}/workspace/*.cwl)
     # Use TAG from dotenv artifact instead of re-extracting
-    - echo "Using TAG from previous stage: $TAG"
+    - echo "Using TAG from previous stage $TAG"
     - VERDI_IMAGE=hysds/verdi:v5.2.0
     # Check if verdi image exists locally, only pull if needed
     - |

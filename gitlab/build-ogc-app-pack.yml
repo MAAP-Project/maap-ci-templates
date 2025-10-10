@@ -1,0 +1,114 @@
+stages:
+  - build
+  - generate
+
+build_image:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  before_script:
+    - echo "$OGC_APP_PACK_DEPLOY_TOKEN" | docker login -u ogc-app-pack-deploy --password-stdin $CI_REGISTRY
+  script:
+    - echo "IMAGE_NAME = $IMAGE_NAME"
+    - echo "IMAGE_TAG = $IMAGE_TAG"
+    - export FULLY_QUALIFIED_IMAGE_URL="$OGC_APP_PACK_REGISTRY/$IMAGE_NAME:$IMAGE_TAG"
+    - docker rmi ${FULLY_QUALIFIED_IMAGE_URL} || true
+    - |
+      cat > Dockerfile <<'DOCKERFILE_EOF'
+      ARG BASE_IMAGE_NAME=condaforge/miniforge3:25.3.1-0
+      FROM ${BASE_IMAGE_NAME}
+
+      ARG REPOSITORY_URL
+      ARG BRANCH_REF
+      ARG BUILD_CMD='$(echo "NO BUILD CMD SPECIFIFED")'
+
+      # Switch user to root explicitly
+      USER root
+
+      RUN mkdir /app
+
+      WORKDIR /app
+
+      RUN git clone --depth 1 --single-branch --branch ${BRANCH_REF} ${REPOSITORY_URL}
+      RUN bash ${BUILD_CMD} && conda clean -afy
+
+      CMD ["/bin/bash"]
+
+      DOCKERFILE_EOF
+    - |
+      docker build --no-cache -t ${FULLY_QUALIFIED_IMAGE_URL} \
+                  --build-arg BUILD_CMD=${BUILD_CMD} \
+                  --build-arg BASE_IMAGE_NAME=${BASE_IMAGE_NAME} \
+                  --build-arg REPOSITORY_URL=${REPOSITORY_URL} \
+                  --build-arg BRANCH_REF=${BRANCH_REF} \
+                  -f Dockerfile .
+    - echo "$OGC_APP_PACK_DEPLOY_TOKEN" | docker login -u ogc-app-pack-deploy --password-stdin $CI_REGISTRY
+    - docker push ${FULLY_QUALIFIED_IMAGE_URL}
+    - echo "FULLY_QUALIFIED_IMAGE_URL=$FULLY_QUALIFIED_IMAGE_URL" > image.env
+  artifacts:
+    reports:
+      dotenv: image.env
+
+  rules:
+    # Allow manual run from UI
+    - if: '$CI_PIPELINE_SOURCE == "web" && $FULLY_QUALIFIED_IMAGE_URL == null'
+      when: always
+    # Allow API trigger
+    - if: '$CI_PIPELINE_SOURCE == "api" && $FULLY_QUALIFIED_IMAGE_URL == null'
+      when: always
+    # Block push or any other source
+    - when: never
+
+generate_ogc_app_pack:
+  stage: generate
+  image: python:3.12
+  dependencies:
+    - build_image
+  script:
+    - echo "Generating OGC application package for image $FULLY_QUALIFIED_IMAGE_URL"
+    - git clone https://github.com/MAAP-Project/ogc-app-pack-generator.git
+    - pip install -r ogc-app-pack-generator/requirements.txt
+    - |
+      python3 - <<'EOF'
+      import os
+      import base64
+      import json
+      from ruamel.yaml import YAML
+
+      # Decode base64 → JSON
+      data_json = base64.b64decode(os.environ['ALGO_CONFIG_JSON_B64']).decode()
+
+      # Parse JSON
+      data = json.loads(data_json)
+      # Add /app since we are cloning the code under /app
+      data['run_command'] = '/app/' + data['run_command']
+
+      # Write YAML
+      yaml = YAML()
+      yaml.indent(mapping=2, sequence=4, offset=2)
+      with open('algo_config.yaml', 'w') as f:
+          yaml.dump(data, f)
+      EOF
+    - export DOCKER_TAG=$FULLY_QUALIFIED_IMAGE_URL
+    - export GIT_COMMIT_HASH="$(git ls-remote ${REPOSITORY_URL} "refs/heads/${BRANCH_REF}" "refs/tags/${BRANCH_REF}" | awk 'NR==1 {print $1}')"
+    - python3 ogc-app-pack-generator/build_cwl_workflow.py --yaml-file algo_config.yaml --cwl-template-file ogc-app-pack-generator/templates/process.v1_2.cwl
+    - |
+      export PROCESS_CWL_FILE_B64=$(cat cwl_workflows/process.cwl | base64 -w 0)
+      status_code=$(curl -X POST -s -o /dev/null -w "%{http_code}" --location "${OGC_PROCESS_FILE_PUBLISH_URL}" -H "Content-Type: application/json" --header "PRIVATE-TOKEN: ${OGC_APP_PACK_WRITE_TOKEN}" --data-raw "{\"branch\": \"main\",\"author_email\": \"root@maap-project.org\",\"author_name\": \"Administrator\",\"commit_message\": \"Publish $IMAGE_NAME/$IMAGE_TAG/process.cwl\",\"encoding\": \"base64\",\"content\": \"$PROCESS_CWL_FILE_B64\"}")
+      if [[ "$status_code" != "201" ]]; then
+        curl -X PUT --location "${OGC_PROCESS_FILE_PUBLISH_URL}" -H "Content-Type: application/json" --header "PRIVATE-TOKEN: ${OGC_APP_PACK_WRITE_TOKEN}" --data-raw "{\"branch\": \"main\",\"author_email\": \"root@maap-project.org\",\"author_name\": \"Administrator\",\"commit_message\": \"Publish $IMAGE_NAME/$IMAGE_TAG/process.cwl\",\"encoding\": \"base64\",\"content\": \"$PROCESS_CWL_FILE_B64\"}"
+      fi
+  artifacts:
+    paths:
+      - cwl_workflows/*
+      - algo_config.yaml
+  
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: always
+    - if: '$CI_PIPELINE_SOURCE == "api"'
+      when: always
+    - when: never
+  tags:
+    - docker
