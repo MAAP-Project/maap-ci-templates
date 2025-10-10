@@ -139,24 +139,24 @@ generate_hysds_specs:
   image: python:3.12
   before_script:
     # Check artifacts exist
-    - ls -R workspace/
-    - cat workspace/docker_url.txt
+    - ls -R ${CI_PROJECT_DIR}/workspace/
+    - cat ${CI_PROJECT_DIR}/workspace/docker_url.txt
     # Use shallow clone for faster checkout
     - git clone --depth 1 https://github.com/MAAP-Project/hysds-ogc-container-builder.git
-    - cd hysds-ogc-container-builder
-    - pip install -r requirements.txt
+    - pip install -r hysds-ogc-container-builder/requirements.txt
   script:
     - pip install awscli
-    - export CONTAINER_URL=$(cat workspace/docker_url.txt)
+    - export CONTAINER_URL=$(cat ${CI_PROJECT_DIR}/workspace/docker_url.txt)
     - echo "Uploading $CWL_FILE_NAME to S3 bucket $S3_BUCKET"
-    - aws s3 cp "workspace/$CWL_FILE_NAME" "s3://$S3_BUCKET/ogc-app-pack/$CWL_FILE_NAME"
+    - aws s3 cp "${CI_PROJECT_DIR}/workspace/$CWL_FILE_NAME" "s3://$S3_BUCKET/ogc-app-pack/$CWL_FILE_NAME"
     - CWL_FILE_URI="s3://$S3_BUCKET/ogc-app-pack/$CWL_FILE_NAME"
     # Convert CWL to HySDS specifications (using registry URL)
-    - python -m utils.cwl_to_hysds "workspace/${CWL_FILE_NAME}" "${PROCESS_NAME_HYSDS}" --docker-uri "${CONTAINER_URL}"
-    - mv hysds-io.json* workspace/
-    - mv job-spec.json* workspace/
+    - export PYTHONPATH="${CI_PROJECT_DIR}/hysds-ogc-container-builder:$PYTHONPATH"
+    - python -m utils.cwl_to_hysds "$CI_PROJECT_DIR/workspace/${CWL_FILE_NAME}" "${PROCESS_NAME_HYSDS}" --docker-uri "${CONTAINER_URL}"
+    - mv hysds-io.json* "$CI_PROJECT_DIR/workspace/"
+    - mv job-spec.json* "$CI_PROJECT_DIR/workspace/"
     # Update job-spec with DPS wrapper command
-    - export JOB_SPEC_PATH=$(ls -d workspace/job-spec.json*)
+    - export JOB_SPEC_PATH=$(ls -d "$CI_PROJECT_DIR/workspace/job-spec.json"*)
     - python -c "import json; f='${JOB_SPEC_PATH}'; d=json.load(open(f)); d['command'] = '/app/dps_wrapper.sh ${CWL_FILE_URI}'; json.dump(d, open(f, 'w'), indent=2)"
   artifacts:
     paths:
@@ -172,13 +172,12 @@ deploy_to_hysds:
     - generate_hysds_specs
   before_script:
     # Check artifacts exist
-    - ls -R workspace/
-    - cat workspace/docker_url.txt
+    - ls -R ${CI_PROJECT_DIR}/workspace/
   script:
     - set -e
-    - export JOB_SPEC_PATH=$(ls -d workspace/job-spec.json*)
-    - export HYSDS_IO_PATH=$(ls -d workspace/hysds-io.json*)
-    - export CWL_PATH=$(ls -d workspace/*.cwl)
+    - export JOB_SPEC_PATH=$(ls -d ${CI_PROJECT_DIR}/workspace/job-spec.json*)
+    - export HYSDS_IO_PATH=$(ls -d ${CI_PROJECT_DIR}/workspace/hysds-io.json*)
+    - export CWL_PATH=$(ls -d ${CI_PROJECT_DIR}/workspace/*.cwl)
     # Use TAG from dotenv artifact instead of re-extracting
     - echo "Using TAG from previous stage $TAG"
     - VERDI_IMAGE=hysds/verdi:v5.2.0
