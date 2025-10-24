@@ -1,0 +1,23 @@
+# Example: How to use the GitFlow validation workflow in your repository
+#
+# This file demonstrates how to integrate the reusable GitFlow validation workflow
+# into your own repository. Copy this file to your repository's .github/workflows
+# directory and customize as needed.
+#
+# DO NOT use this file directly - it's just an example!
+
+name: Pull Request Validation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  gitflow-validation:
+    name: Validate GitFlow Rules
+    uses: MAAP-Project/maap-ci-templates/.github/workflows/gitflow-validation.yml@main
+    # Optional: pass custom allowed patterns
+    # with:
+    #   custom_allowed_patterns: |
+    #     - pattern: "custom/*"
+    #       target: "develop"
