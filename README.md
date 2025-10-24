@@ -1,13 +1,19 @@
 # MAAP CI/CD Templates
 
-GitLab CI/CD pipeline templates for building and deploying OGC Application Packages to the MAAP (Multi-Mission Algorithm and Analysis Platform) HySDS environment.
+CI/CD templates for the MAAP (Multi-Mission Algorithm and Analysis Platform) including GitLab CI/CD pipeline templates for building and deploying OGC Application Packages to HySDS, and GitHub Actions workflows for repository management.
 
 ## Overview
 
-This repository provides two reusable GitLab CI templates:
+This repository provides reusable CI/CD templates for both GitLab and GitHub:
+
+### GitLab CI Templates
 
 1. **[build-ogc-app-pack.yml](gitlab/build-ogc-app-pack.yml)** - Builds Docker images from algorithm repositories and generates OGC-compliant CWL workflow files
 2. **[deploy-ogc-hysds.yml](gitlab/deploy-ogc-hysds.yml)** - Converts and deploys OGC Application Packages to HySDS infrastructure
+
+### GitHub Actions Workflows
+
+1. **[gitflow-validation.yml](.github/workflows/gitflow-validation.yml)** - Enforces GitFlow branching rules on pull requests
 
 ## Quick Start
 
@@ -28,6 +34,33 @@ Add this template to deploy existing OGC packages:
 include:
   - remote: 'https://raw.githubusercontent.com/MAAP-Project/maap-ci-templates/main/gitlab/deploy-ogc-hysds.yml'
 ```
+
+### Enforcing GitFlow Branch Rules (GitHub Actions)
+
+Add this reusable workflow to validate GitFlow rules on pull requests in your GitHub repository. Create or update `.github/workflows/pr-validation.yml`:
+
+```yaml
+name: Pull Request Validation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  gitflow-validation:
+    name: Validate GitFlow Rules
+    uses: MAAP-Project/maap-ci-templates/.github/workflows/gitflow-validation.yml@main
+```
+
+This workflow enforces standard GitFlow branching patterns:
+- `feature/*` → `develop`
+- `bugfix/*` → `develop` or `release/*`
+- `develop` → `release/*`
+- `release/*` → `main` or `develop`
+- `hotfix/*` → `main`
+- `main` → `develop`
+
+For detailed usage and configuration options, see the [GitFlow Validation Documentation](#gitflow-validation-github-actions) below.
 
 ## Pipeline Stages
 
@@ -172,6 +205,131 @@ CWL files are renamed to: `${PROCESS_NAME_HYSDS}.${TAG}.process.cwl` where TAG i
 - [hysds-ogc-container-builder](https://github.com/MAAP-Project/hysds-ogc-container-builder) - HySDS specification generator
 - `hysds/verdi:v5.2.0` - HySDS deployment container
 - Docker registry v2
+
+## GitFlow Validation (GitHub Actions)
+
+The GitFlow validation workflow enforces standard GitFlow branching patterns on pull requests to maintain a consistent branching strategy across your repositories.
+
+### Features
+
+- **Automatic PR validation**: Runs automatically on pull request creation and updates
+- **GitFlow enforcement**: Validates source and target branch combinations against GitFlow rules
+- **Clear feedback**: Provides detailed error messages showing allowed branch combinations
+- **Reusable workflow**: Easily integrate into any GitHub repository
+- **Extensible**: Support for custom branch patterns (future enhancement)
+
+### Standard GitFlow Rules
+
+The workflow enforces these standard GitFlow patterns:
+
+| Source Branch | Target Branch | Purpose |
+|--------------|---------------|---------|
+| `feature/*` | `develop` | New features merge into development |
+| `bugfix/*` | `develop` | Bug fixes for next release |
+| `bugfix/*` | `release/*` | Bug fixes during release stabilization |
+| `develop` | `release/*` | Create new release from development |
+| `release/*` | `main` | Deploy stable release to production |
+| `release/*` | `develop` | Merge release changes back to development |
+| `hotfix/*` | `main` | Emergency fixes to production |
+| `main` | `develop` | Sync production hotfixes back to development |
+
+### Usage
+
+#### Basic Setup
+
+1. Create `.github/workflows/pr-validation.yml` in your repository:
+
+```yaml
+name: Pull Request Validation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  gitflow-validation:
+    name: Validate GitFlow Rules
+    uses: MAAP-Project/maap-ci-templates/.github/workflows/gitflow-validation.yml@main
+```
+
+2. Commit and push the workflow file
+3. All future pull requests will be validated automatically
+
+#### Using a Specific Version
+
+For production stability, pin to a specific version or tag:
+
+```yaml
+jobs:
+  gitflow-validation:
+    uses: MAAP-Project/maap-ci-templates/.github/workflows/gitflow-validation.yml@v1.0.0
+```
+
+#### Branch Protection Integration
+
+Combine with GitHub branch protection rules for maximum effectiveness:
+
+1. Go to your repository Settings → Branches
+2. Add branch protection rule for `main` and `develop`
+3. Enable "Require status checks to pass before merging"
+4. Select "Validate GitFlow Rules" as a required check
+
+This prevents merges that violate GitFlow rules.
+
+### Workflow Inputs
+
+The workflow supports optional configuration:
+
+```yaml
+jobs:
+  gitflow-validation:
+    uses: MAAP-Project/maap-ci-templates/.github/workflows/gitflow-validation.yml@main
+    with:
+      custom_allowed_patterns: |
+        - pattern: "custom/*"
+          target: "develop"
+```
+
+**Note**: Custom pattern support is reserved for future implementation.
+
+### Example Output
+
+**Successful validation:**
+```
+🔍 Validating PR: feature/add-user-auth → develop
+✅ Feature branch merging into develop — OK
+```
+
+**Failed validation:**
+```
+🔍 Validating PR: feature/add-user-auth → main
+❌ Invalid Git-Flow PR direction: feature/add-user-auth → main
+   Allowed combinations:
+   - feature/*  → develop
+   - bugfix/*   → develop
+   - bugfix/*   → release/*
+   - develop    → release/*
+   - release/*  → main
+   - release/*  → develop
+   - hotfix/*   → main
+   - main       → develop
+```
+
+### Troubleshooting
+
+**Workflow not running:**
+- Ensure the workflow file is in `.github/workflows/` directory
+- Verify the file has `.yml` or `.yaml` extension
+- Check that branch protection rules include the workflow as a required check
+
+**Validation failing unexpectedly:**
+- Verify your branch names match GitFlow patterns (e.g., `feature/my-feature`, not `features/my-feature`)
+- Check that source and target branches are correct in the PR
+- Review the workflow output for specific error messages
+
+**Custom patterns not working:**
+- Custom pattern support is planned for a future release
+- For now, only standard GitFlow patterns are enforced
 
 ## Recent Improvements
 

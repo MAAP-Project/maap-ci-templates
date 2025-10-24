@@ -1,0 +1,66 @@
+name: Git-Flow PR Validation
+
+on:
+  workflow_call:
+    inputs:
+      custom_allowed_patterns:
+        description: 'Optional custom patterns to allow (YAML list format)'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  validate-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR source and target branches
+        run: |
+          SOURCE="${{ github.event.pull_request.head.ref }}"
+          TARGET="${{ github.event.pull_request.base.ref }}"
+
+          echo "🔍 Validating PR: $SOURCE → $TARGET"
+
+          # Parse custom patterns if provided
+          if [[ -n "${{ inputs.custom_allowed_patterns }}" ]]; then
+            echo "Using custom allowed patterns in addition to GitFlow defaults"
+            # Custom pattern handling would go here
+          fi
+
+          # GitFlow rules
+          if [[ "$SOURCE" == feature/* && "$TARGET" == "develop" ]]; then
+            echo "✅ Feature branch merging into develop — OK"
+            exit 0
+          elif [[ "$SOURCE" == bugfix/* && "$TARGET" == "develop" ]]; then
+            echo "✅ Bugfix branch merging into develop — OK"
+            exit 0
+          elif [[ "$SOURCE" == bugfix/* && "$TARGET" == release/* ]]; then
+            echo "✅ Bugfix branch merging into release — OK"
+            exit 0
+          elif [[ "$SOURCE" == "develop" && "$TARGET" == release/* ]]; then
+            echo "✅ Develop merging into release — OK"
+            exit 0
+          elif [[ "$SOURCE" == release/* && "$TARGET" == "main" ]]; then
+            echo "✅ Release merging into main — OK"
+            exit 0
+          elif [[ "$SOURCE" == release/* && "$TARGET" == "develop" ]]; then
+            echo "✅ Release merging back into develop — OK"
+            exit 0
+          elif [[ "$SOURCE" == hotfix/* && "$TARGET" == "main" ]]; then
+            echo "✅ Hotfix merging into main — OK"
+            exit 0
+          elif [[ "$SOURCE" == "main" && "$TARGET" == "develop" ]]; then
+            echo "✅ Main merging back into develop — OK"
+            exit 0
+          else
+            echo "❌ Invalid Git-Flow PR direction: $SOURCE → $TARGET"
+            echo "   Allowed combinations:"
+            echo "   - feature/*  → develop"
+            echo "   - bugfix/*   → develop"
+            echo "   - bugfix/*   → release/*"
+            echo "   - develop    → release/*"
+            echo "   - release/*  → main"
+            echo "   - release/*  → develop"
+            echo "   - hotfix/*   → main"
+            echo "   - main       → develop"
+            exit 1
+          fi
