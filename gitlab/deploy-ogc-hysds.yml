@@ -170,6 +170,7 @@ deploy_to_hysds:
   stage: deploy_to_hysds
   dependencies:
     - generate_hysds_specs
+    - validate
   before_script:
     # Check artifacts exist
     - ls -R ${CI_PROJECT_DIR}/workspace/
