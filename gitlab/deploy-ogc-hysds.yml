@@ -142,7 +142,7 @@ generate_hysds_specs:
     - ls -R ${CI_PROJECT_DIR}/workspace/
     - cat ${CI_PROJECT_DIR}/workspace/docker_url.txt
     # Use shallow clone for faster checkout
-    - git clone --depth 1 --single-branch --branch ${HYSDSD_OGC_BUILDER_BRANCH:-main} https://github.com/MAAP-Project/hysds-ogc-container-builder.git
+    - git clone --depth 1 --single-branch --branch ${HYSDS_OGC_BUILDER_BRANCH:-main} https://github.com/MAAP-Project/hysds-ogc-container-builder.git
     - pip install -r hysds-ogc-container-builder/requirements.txt
   script:
     - pip install awscli
