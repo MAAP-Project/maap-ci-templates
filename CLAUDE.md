@@ -34,7 +34,8 @@ Required variables that must be set in GitLab CI/CD settings:
 - `HYSDS_DOCKER_REGISTRY`: Target HySDS Docker registry URL
 - `MAAP_CODE_BUCKET`: S3 bucket for storing artifacts and CWL files
 - `S3_REGION`: S3 region (default: us-west-2)
-- `CWL_URL`: URL to the OGC Application Package CWL file to deploy
+- `CWL_URL`: URL to the OGC Application Package CWL file to deploy (use this OR PROCESS, not both)
+- `PROCESS`: JSON-stringified Python dictionary containing the OGC Application Package process (use this OR CWL_URL, not both)
 - `PROCESS_NAME_HYSDS`: Name to use for the HySDS job specification
 
 **MAAP Executor Configuration:**
@@ -87,6 +88,49 @@ The template includes several performance and reliability improvements:
 - **Push verification**: Docker push is verified before proceeding to next steps
 - **Direct registry usage**: Uses registry URLs directly instead of tar files for faster deployment
 - **Artifact reuse**: TAG is extracted once and passed via dotenv to avoid duplicate extraction
+
+## Input Methods
+
+The pipeline supports two methods for providing the OGC Application Package:
+
+### Method 1: CWL_URL (Remote File)
+Set the `CWL_URL` variable to point to a publicly accessible CWL file:
+```yaml
+variables:
+  CWL_URL: "https://example.com/path/to/process.cwl"
+```
+
+### Method 2: PROCESS (Inline JSON)
+Set the `PROCESS` variable to a JSON-stringified Python dictionary containing the CWL process definition. This is useful when the process is generated dynamically or stored in a database.
+
+Example in Python:
+```python
+import json
+
+process = {
+    "cwlVersion": "v1.0",
+    "class": "CommandLineTool",
+    "s:version": "1.0.0",
+    "baseCommand": ["python", "script.py"],
+    "requirements": {
+        "DockerRequirement": {
+            "dockerPull": "example/image:latest"
+        }
+    },
+    # ... rest of CWL definition
+}
+
+# Convert to JSON string for GitLab CI variable
+process_json = json.dumps(process)
+```
+
+Then set in GitLab CI/CD variables:
+```yaml
+variables:
+  PROCESS: '{"cwlVersion": "v1.0", "class": "CommandLineTool", ...}'
+```
+
+**Important**: Only provide ONE of `CWL_URL` or `PROCESS`. The pipeline will fail if both or neither are set.
 
 ## Usage with GitLab Include Directive
 
