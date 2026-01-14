@@ -114,7 +114,8 @@ Configure these in your GitLab CI/CD settings:
 - `HYSDS_DOCKER_REGISTRY` - Target HySDS Docker registry URL
 - `MAAP_CODE_BUCKET` - S3 bucket for storing artifacts and CWL files
 - `S3_REGION` - S3 region (default: us-west-2)
-- `CWL_URL` - URL to the OGC Application Package CWL file to deploy
+- `CWL_URL`: URL to the OGC Application Package CWL file to deploy (use this OR PROCESS, not both)
+- `PROCESS`: Base64-encoded CWL file content (use this OR CWL_URL, not both)
 - `PROCESS_NAME_HYSDS` - Name to use for the HySDS job specification
 
 #### MAAP Executor Configuration
@@ -128,6 +129,41 @@ Configure these in your GitLab CI/CD settings:
 - `MOZART_REST_URL` - HySDS Mozart REST API endpoint
 - `STORAGE` - Storage backend URL for HySDS
 - `GRQ_REST_URL` - HySDS GRQ (General Request Queue) REST API endpoint
+
+### Input Methods (deploy-ogc-hysds.yml)
+
+The pipeline supports two methods for providing the OGC Application Package:
+
+### Method 1: CWL_URL (Remote File)
+Set the `CWL_URL` variable to point to a publicly accessible CWL file:
+```yaml
+variables:
+  CWL_URL: "https://raw.githubusercontent.com/grallewellyn/cwl-files/refs/heads/main/cwl1.cwl"
+```
+### Method 2: PROCESS (Base64-Encoded CWL)
+Set the `PROCESS` variable to a base64-encoded CWL file content. This is useful when the CWL is generated dynamically, stored in a database, or passed through an API.
+
+Example Python client that reads a CWL file and passes it to the API:
+```python
+import base64
+# Read CWL file
+with open('path/to/process.cwl', 'r') as f:
+    cwl_content = f.read()
+# Base64 encode the content
+process_base64 = base64.b64encode(cwl_content.encode()).decode()
+# Pass process_base64 to your API
+# The API should then set this as the PROCESS variable in GitLab CI/CD
+```
+
+The pipeline will automatically decode the base64 content back to CWL format.
+
+Then set in GitLab CI/CD variables (typically via API):
+```yaml
+variables:
+  PROCESS: "Y3dsVmVyc2lvbjogdjEuMApjbGFzcz... (base64 encoded content)"
+```
+
+**Important**: Only provide ONE of `CWL_URL` or `PROCESS`. The pipeline will fail if both or neither are set.
 
 ## Runner Requirements
 
