@@ -22,9 +22,31 @@ validate:
   script:
     - pip install ogc_ap_validator==0.5.0 pyyaml
     - set -e
-    - ap-validator "$CWL_URL"
-    - echo "Downloading CWL file from $CWL_URL"
-    - curl -L "$CWL_URL" -o process.cwl
+    # Check which input method is being used
+    - |
+      if [ -n "$PROCESS" ] && [ -n "$CWL_URL" ]; then
+        echo "ERROR: Both PROCESS and CWL_URL are set. Please provide only one."
+        exit 1
+      fi
+      if [ -z "$PROCESS" ] && [ -z "$CWL_URL" ]; then
+        echo "ERROR: Neither PROCESS nor CWL_URL is set. Please provide one."
+        exit 1
+      fi
+    # Handle PROCESS input (base64-encoded CWL text)
+    - |
+      if [ -n "$PROCESS" ]; then
+        echo "Using PROCESS variable input (base64-encoded CWL)"
+        echo "$PROCESS" | base64 -d > process.cwl
+        echo "Decoded CWL file from PROCESS variable"
+        cat process.cwl
+        # Validate the generated CWL file
+        ap-validator process.cwl
+      else
+        echo "Downloading CWL file from $CWL_URL"
+        curl -L "$CWL_URL" -o process.cwl
+        # Validate the downloaded CWL file
+        ap-validator "$CWL_URL"
+      fi
     # Extract version tag from CWL file
     - export TAG=$(grep 's:version:' process.cwl | sed 's/.*s:version:[[:space:]]*//')
     - |
