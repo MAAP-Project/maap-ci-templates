@@ -35,7 +35,7 @@ Required variables that must be set in GitLab CI/CD settings:
 - `MAAP_CODE_BUCKET`: S3 bucket for storing artifacts and CWL files
 - `S3_REGION`: S3 region (default: us-west-2)
 - `CWL_URL`: URL to the OGC Application Package CWL file to deploy (use this OR PROCESS, not both)
-- `PROCESS`: JSON-stringified Python dictionary containing the OGC Application Package process (use this OR CWL_URL, not both)
+- `PROCESS`: Base64-encoded CWL file content (use this OR CWL_URL, not both)
 - `PROCESS_NAME_HYSDS`: Name to use for the HySDS job specification
 
 **MAAP Executor Configuration:**
@@ -97,37 +97,33 @@ The pipeline supports two methods for providing the OGC Application Package:
 Set the `CWL_URL` variable to point to a publicly accessible CWL file:
 ```yaml
 variables:
-  CWL_URL: "https://example.com/path/to/process.cwl"
+  CWL_URL: "https://raw.githubusercontent.com/grallewellyn/cwl-files/refs/heads/main/cwl1.cwl"
 ```
 
-### Method 2: PROCESS (Inline JSON)
-Set the `PROCESS` variable to a JSON-stringified Python dictionary containing the CWL process definition. This is useful when the process is generated dynamically or stored in a database.
+### Method 2: PROCESS (Base64-Encoded CWL)
+Set the `PROCESS` variable to a base64-encoded CWL file content. This is useful when the CWL is generated dynamically, stored in a database, or passed through an API.
 
-Example in Python:
+Example Python client that reads a CWL file and passes it to the API:
 ```python
-import json
+import base64
 
-process = {
-    "cwlVersion": "v1.0",
-    "class": "CommandLineTool",
-    "s:version": "1.0.0",
-    "baseCommand": ["python", "script.py"],
-    "requirements": {
-        "DockerRequirement": {
-            "dockerPull": "example/image:latest"
-        }
-    },
-    # ... rest of CWL definition
-}
+# Read CWL file
+with open('path/to/process.cwl', 'r') as f:
+    cwl_content = f.read()
 
-# Convert to JSON string for GitLab CI variable
-process_json = json.dumps(process)
+# Base64 encode the content
+process_base64 = base64.b64encode(cwl_content.encode()).decode()
+
+# Pass process_base64 to your API
+# The API should then set this as the PROCESS variable in GitLab CI/CD
 ```
 
-Then set in GitLab CI/CD variables:
+The pipeline will automatically decode the base64 content back to CWL format.
+
+Then set in GitLab CI/CD variables (typically via API):
 ```yaml
 variables:
-  PROCESS: '{"cwlVersion": "v1.0", "class": "CommandLineTool", ...}'
+  PROCESS: "Y3dsVmVyc2lvbjogdjEuMApjbGFzcz... (base64 encoded content)"
 ```
 
 **Important**: Only provide ONE of `CWL_URL` or `PROCESS`. The pipeline will fail if both or neither are set.
