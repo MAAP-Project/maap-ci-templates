@@ -37,15 +37,28 @@ validate:
       if [ -n "$PROCESS" ]; then
         echo "Using PROCESS variable input (base64-encoded CWL)"
         echo "$PROCESS" | base64 -d > process.cwl
-        echo "Decoded CWL file from PROCESS variable"
-        cat process.cwl
-        # Validate the generated CWL file
-        ap-validator process.cwl
       else
         echo "Downloading CWL file from $CWL_URL"
         curl -L "$CWL_URL" -o process.cwl
-        # Validate the downloaded CWL file
-        ap-validator "$CWL_URL"
+      fi
+    # Validation Logic with Node.js Fallback
+    - |
+      echo "Starting CWL validation..."
+      if ap-validator process.cwl; then
+        echo "✓ Validation successful on first attempt."
+      else
+        echo "⚠ Validation failed. Attempting to install Node.js engine for JS expressions..."
+        apt-get update && apt-get install -y ca-certificates curl gnupg
+        curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
+        apt-get install -y nodejs
+        echo "✓ Node.js $(node -v) installed. Retrying validation..."
+        
+        if ap-validator process.cwl; then
+          echo "✓ Validation successful after installing Node.js."
+        else
+          echo "× ERROR: CWL is still invalid even with Node.js engine."
+          exit 1
+        fi
       fi
     # Extract version tag from CWL file
     - export TAG=$(grep 's:version:' process.cwl | sed 's/.*s:version:[[:space:]]*//')
@@ -56,7 +69,6 @@ validate:
       fi
     - echo "Extracted version TAG $TAG"
     - CWL_FILE_NAME="$PROCESS_NAME_HYSDS.$TAG.process.cwl"
-    - echo "CWL Filename is $CWL_FILE_NAME"
     - mv process.cwl "$CWL_FILE_NAME"
     - mkdir -p workspace
     - mv "$CWL_FILE_NAME" workspace/
