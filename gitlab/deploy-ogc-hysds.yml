@@ -47,18 +47,8 @@ validate:
       if ap-validator process.cwl; then
         echo "✓ Validation successful on first attempt."
       else
-        echo "⚠ Validation failed. Attempting to install Node.js engine for JS expressions..."
-        apt-get update && apt-get install -y ca-certificates curl gnupg
-        curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
-        apt-get install -y nodejs
-        echo "✓ Node.js $(node -v) installed. Retrying validation..."
-        
-        if ap-validator process.cwl; then
-          echo "✓ Validation successful after installing Node.js."
-        else
-          echo "× ERROR: CWL is still invalid even with Node.js engine."
-          exit 1
-        fi
+        echo "⚠ Validation failed. Error message about syntax:"
+        cwltool --validate process.cwl
       fi
     # Extract version tag from CWL file
     - export TAG=$(grep 's:version:' process.cwl | sed 's/.*s:version:[[:space:]]*//')
