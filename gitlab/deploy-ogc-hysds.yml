@@ -43,11 +43,10 @@ validate:
       fi
     # Validation Logic with Node.js Fallback
     - |
-      echo "Starting CWL validation..."
       if ap-validator process.cwl; then
-        echo "✓ Validation successful on first attempt."
+        echo "Validation successful on first attempt."
       else
-        echo "⚠ Validation failed. Error message about syntax:"
+        echo "Validation failed. Error message about syntax:"
         cwltool --validate process.cwl
       fi
     # Extract version tag from CWL file
