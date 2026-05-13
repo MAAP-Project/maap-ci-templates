@@ -29,6 +29,18 @@ include:
 ### Deploying to HySDS
 
 Add this template to deploy existing OGC packages:
+### Building OGC Application Packages
+
+Add this template to build Docker images and generate CWL files:
+
+```yaml
+include:
+  - remote: 'https://raw.githubusercontent.com/MAAP-Project/maap-ci-templates/main/gitlab/build-ogc-app-pack.yml'
+```
+
+### Deploying to HySDS
+
+Add this template to deploy existing OGC packages:
 
 ```yaml
 include:
@@ -83,6 +95,25 @@ The build pipeline consists of two stages:
 
 ### Deployment Pipeline (deploy-ogc-hysds.yml)
 
+### Build Pipeline (build-ogc-app-pack.yml)
+
+The build pipeline consists of two stages:
+
+1. **Build** - Builds Docker image from algorithm repository
+   - Uses Docker-in-Docker (dind) service
+   - Clones algorithm repository at specified branch
+   - Builds Docker image with configurable base image and build command
+   - Pushes image to OGC Application Package registry
+   - Authenticates using deploy token
+
+2. **Generate** - Generates OGC Application Package CWL file
+   - Uses algorithm configuration (base64-encoded JSON)
+   - Generates CWL workflow using ogc-app-pack-generator
+   - Publishes CWL file to configured endpoint via GitLab API
+   - Creates or updates CWL file using POST/PUT requests
+
+### Deployment Pipeline (deploy-ogc-hysds.yml)
+
 The deployment pipeline consists of four stages:
 
 1. **Validate** - Downloads and validates OGC Application Package CWL files against OGC standards
@@ -108,8 +139,25 @@ The deployment pipeline consists of four stages:
 
 ### Deployment Pipeline Variables (deploy-ogc-hysds.yml)
 
+### Build Pipeline Variables (build-ogc-app-pack.yml)
+
+- `IMAGE_NAME` - Name for the Docker image (e.g., "my-algorithm")
+- `IMAGE_TAG` - Tag for the Docker image (e.g., "v1.0.0")
+- `OGC_APP_PACK_REGISTRY` - Docker registry URL for OGC Application Packages
+- `OGC_APP_PACK_DEPLOY_TOKEN` - Authentication token for registry access
+- `REPOSITORY_URL` - Git repository URL containing the algorithm code
+- `BRANCH_REF` - Branch or tag reference to clone from repository
+- `BUILD_CMD` - Command to execute for building the algorithm (e.g., "./build.sh")
+- `BASE_IMAGE_NAME` - Base Docker image to use (default: condaforge/miniforge3:25.3.1-0)
+- `ALGO_CONFIG_JSON_B64` - Base64-encoded JSON configuration for algorithm
+- `OGC_PROCESS_FILE_PUBLISH_URL` - GitLab API URL to publish the generated CWL file
+- `OGC_APP_PACK_WRITE_TOKEN` - GitLab API token with write permissions
+
+### Deployment Pipeline Variables (deploy-ogc-hysds.yml)
+
 Configure these in your GitLab CI/CD settings:
 
+#### Pipeline Configuration
 #### Pipeline Configuration
 - `HYSDS_DOCKER_REGISTRY` - Target HySDS Docker registry URL
 - `MAAP_CODE_BUCKET` - S3 bucket for storing artifacts and CWL files
@@ -119,12 +167,14 @@ Configure these in your GitLab CI/CD settings:
 - `PROCESS_NAME_HYSDS` - Name to use for the HySDS job specification
 
 #### MAAP Executor Configuration
+#### MAAP Executor Configuration
 - `MAAP_OGC_EXECUTOR_CONTAINER_NAME` - Name of the MAAP OGC executor container
 - `MAAP_OGC_EXECUTOR_CONTAINER_VERSION` - Version of the MAAP OGC executor container
 - `MAAP_OGC_EXECUTOR_CONTAINER_URL` - Full URL to the MAAP OGC executor container image
 - `MAAP_PRIVATE_DOCKER_REGISTRY` - Private Docker registry URL for MAAP images
 - `MAAP_PRIVATE_REGISTRY_TOKEN` - Authentication token for private registry access
 
+#### HySDS Configuration
 #### HySDS Configuration
 - `MOZART_REST_URL` - HySDS Mozart REST API endpoint
 - `STORAGE` - Storage backend URL for HySDS
@@ -174,6 +224,13 @@ variables:
 - GitLab container registry credentials
 
 ### Deployment Pipeline Requirements
+### Build Pipeline Requirements
+
+- **docker** runners with Docker-in-Docker (dind) support
+- Access to Docker registry for pushing images
+- GitLab container registry credentials
+
+### Deployment Pipeline Requirements
 
 - **docker** runners - For validation and conversion stages (Python 3.12 environment)
 - **shell** runners - For download and deployment stages (must have Docker daemon access and AWS credentials)
@@ -189,12 +246,23 @@ variables:
 - **Manual and API-triggered pipelines** with rule-based execution
 
 ### Deployment Pipeline Features
+### Build Pipeline Features
+- **Automated Docker image building** from algorithm repositories
+- **Configurable base images** (default: condaforge/miniforge3)
+- **Shallow git cloning** for faster builds
+- **OGC CWL workflow generation** from algorithm configuration
+- **Automatic CWL publishing** to configured endpoints via GitLab API
+- **Manual and API-triggered pipelines** with rule-based execution
+
+### Deployment Pipeline Features
 - **OGC Application Package validation** using `ogc_ap_validator`
 - **Automated version extraction** from CWL `s:version` field
 - **Docker image retagging** and registry migration
 - **Digest-based push verification** with automatic retry on failure
+- **Digest-based push verification** with automatic retry on failure
 - **HySDS specification generation** via `hysds-ogc-container-builder`
 - **Self-contained deployment** with inline scripts for portability
+- **Absolute path handling** for reliable artifact passing between stages
 - **Absolute path handling** for reliable artifact passing between stages
 
 ## Performance Optimizations
@@ -205,9 +273,17 @@ variables:
 - Early validation to fail fast on errors
 - Direct registry URLs instead of tar files for faster deployment
 - Optimized Docker digest comparison for reliable push verification
+- Optimized Docker digest comparison for reliable push verification
 
 ## Artifacts
 
+### Build Pipeline Artifacts
+
+- `image.env` - Dotenv artifact containing `FULLY_QUALIFIED_IMAGE_URL`
+- `cwl_workflows/*` - Generated CWL workflow files
+- `algo_config.yaml` - Parsed algorithm configuration in YAML format
+
+### Deployment Pipeline Artifacts
 ### Build Pipeline Artifacts
 
 - `image.env` - Dotenv artifact containing `FULLY_QUALIFIED_IMAGE_URL`
@@ -227,6 +303,15 @@ variables:
 CWL files are renamed to: `${PROCESS_NAME_HYSDS}.${TAG}.process.cwl` where TAG is extracted from the `s:version:` field in the CWL file.
 
 ## Dependencies
+
+### Build Pipeline Dependencies
+
+- [ogc-app-pack-generator](https://github.com/MAAP-Project/ogc-app-pack-generator) - OGC CWL workflow generator
+- `condaforge/miniforge3:25.3.1-0` - Default base image
+- Docker registry v2
+- GitLab API for CWL file publishing
+
+### Deployment Pipeline Dependencies
 
 ### Build Pipeline Dependencies
 
