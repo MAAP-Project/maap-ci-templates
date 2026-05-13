@@ -1,16 +1,34 @@
 # MAAP CI/CD Templates
 
-GitLab CI/CD pipeline templates for building and deploying OGC Application Packages to the MAAP (Multi-Mission Algorithm and Analysis Platform) HySDS environment.
+CI/CD templates for the MAAP (Multi-Mission Algorithm and Analysis Platform) including GitLab CI/CD pipeline templates for building and deploying OGC Application Packages to HySDS, and GitHub Actions workflows for repository management.
 
 ## Overview
 
-This repository provides two reusable GitLab CI templates:
+This repository provides reusable CI/CD templates for both GitLab and GitHub:
+
+### GitLab CI Templates
 
 1. **[build-ogc-app-pack.yml](gitlab/build-ogc-app-pack.yml)** - Builds Docker images from algorithm repositories and generates OGC-compliant CWL workflow files
 2. **[deploy-ogc-hysds.yml](gitlab/deploy-ogc-hysds.yml)** - Converts and deploys OGC Application Packages to HySDS infrastructure
 
+### GitHub Actions Workflows
+
+1. **[gitflow-validation.yml](.github/workflows/gitflow-validation.yml)** - Enforces GitFlow branching rules on pull requests
+
 ## Quick Start
 
+### Building OGC Application Packages
+
+Add this template to build Docker images and generate CWL files:
+
+```yaml
+include:
+  - remote: 'https://raw.githubusercontent.com/MAAP-Project/maap-ci-templates/main/gitlab/build-ogc-app-pack.yml'
+```
+
+### Deploying to HySDS
+
+Add this template to deploy existing OGC packages:
 ### Building OGC Application Packages
 
 Add this template to build Docker images and generate CWL files:
@@ -29,7 +47,53 @@ include:
   - remote: 'https://raw.githubusercontent.com/MAAP-Project/maap-ci-templates/main/gitlab/deploy-ogc-hysds.yml'
 ```
 
+### Enforcing GitFlow Branch Rules (GitHub Actions)
+
+Add this reusable workflow to validate GitFlow rules on pull requests in your GitHub repository. Create or update `.github/workflows/pr-validation.yml`:
+
+```yaml
+name: Pull Request Validation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  gitflow-validation:
+    name: Validate GitFlow Rules
+    uses: MAAP-Project/maap-ci-templates/.github/workflows/gitflow-validation.yml@main
+```
+
+This workflow enforces standard GitFlow branching patterns:
+- `feature/*` → `develop`
+- `bugfix/*` → `develop` or `release/*`
+- `develop` → `release/*`
+- `release/*` → `main` or `develop`
+- `hotfix/*` → `main`
+- `main` → `develop`
+
+For detailed usage and configuration options, see the [GitFlow Validation Documentation](#gitflow-validation-github-actions) below.
+
 ## Pipeline Stages
+
+### Build Pipeline (build-ogc-app-pack.yml)
+
+The build pipeline consists of two stages:
+
+1. **Build** - Builds Docker image from algorithm repository
+   - Uses Docker-in-Docker (dind) service
+   - Clones algorithm repository at specified branch
+   - Builds Docker image with configurable base image and build command
+   - Pushes image to OGC Application Package registry
+   - Authenticates using deploy token
+
+2. **Generate** - Generates OGC Application Package CWL file
+   - Uses algorithm configuration (base64-encoded JSON)
+   - Generates CWL workflow using ogc-app-pack-generator
+   - Publishes CWL file to configured endpoint via GitLab API
+   - Creates or updates CWL file using POST/PUT requests
+
+### Deployment Pipeline (deploy-ogc-hysds.yml)
 
 ### Build Pipeline (build-ogc-app-pack.yml)
 
@@ -75,15 +139,34 @@ The deployment pipeline consists of four stages:
 
 ### Deployment Pipeline Variables (deploy-ogc-hysds.yml)
 
+### Build Pipeline Variables (build-ogc-app-pack.yml)
+
+- `IMAGE_NAME` - Name for the Docker image (e.g., "my-algorithm")
+- `IMAGE_TAG` - Tag for the Docker image (e.g., "v1.0.0")
+- `OGC_APP_PACK_REGISTRY` - Docker registry URL for OGC Application Packages
+- `OGC_APP_PACK_DEPLOY_TOKEN` - Authentication token for registry access
+- `REPOSITORY_URL` - Git repository URL containing the algorithm code
+- `BRANCH_REF` - Branch or tag reference to clone from repository
+- `BUILD_CMD` - Command to execute for building the algorithm (e.g., "./build.sh")
+- `BASE_IMAGE_NAME` - Base Docker image to use (default: condaforge/miniforge3:25.3.1-0)
+- `ALGO_CONFIG_JSON_B64` - Base64-encoded JSON configuration for algorithm
+- `OGC_PROCESS_FILE_PUBLISH_URL` - GitLab API URL to publish the generated CWL file
+- `OGC_APP_PACK_WRITE_TOKEN` - GitLab API token with write permissions
+
+### Deployment Pipeline Variables (deploy-ogc-hysds.yml)
+
 Configure these in your GitLab CI/CD settings:
 
+#### Pipeline Configuration
 #### Pipeline Configuration
 - `HYSDS_DOCKER_REGISTRY` - Target HySDS Docker registry URL
 - `MAAP_CODE_BUCKET` - S3 bucket for storing artifacts and CWL files
 - `S3_REGION` - S3 region (default: us-west-2)
-- `CWL_URL` - URL to the OGC Application Package CWL file to deploy
+- `CWL_URL`: URL to the OGC Application Package CWL file to deploy (use this OR PROCESS, not both)
+- `PROCESS`: Base64-encoded CWL file content (use this OR CWL_URL, not both)
 - `PROCESS_NAME_HYSDS` - Name to use for the HySDS job specification
 
+#### MAAP Executor Configuration
 #### MAAP Executor Configuration
 - `MAAP_OGC_EXECUTOR_CONTAINER_NAME` - Name of the MAAP OGC executor container
 - `MAAP_OGC_EXECUTOR_CONTAINER_VERSION` - Version of the MAAP OGC executor container
@@ -92,12 +175,55 @@ Configure these in your GitLab CI/CD settings:
 - `MAAP_PRIVATE_REGISTRY_TOKEN` - Authentication token for private registry access
 
 #### HySDS Configuration
+#### HySDS Configuration
 - `MOZART_REST_URL` - HySDS Mozart REST API endpoint
 - `STORAGE` - Storage backend URL for HySDS
 - `GRQ_REST_URL` - HySDS GRQ (General Request Queue) REST API endpoint
 
+### Input Methods (deploy-ogc-hysds.yml)
+
+The pipeline supports two methods for providing the OGC Application Package:
+
+### Method 1: CWL_URL (Remote File)
+Set the `CWL_URL` variable to point to a publicly accessible CWL file:
+```yaml
+variables:
+  CWL_URL: "https://raw.githubusercontent.com/grallewellyn/cwl-files/refs/heads/main/cwl1.cwl"
+```
+### Method 2: PROCESS (Base64-Encoded CWL)
+Set the `PROCESS` variable to a base64-encoded CWL file content. This is useful when the CWL is generated dynamically, stored in a database, or passed through an API.
+
+Example Python client that reads a CWL file and passes it to the API:
+```python
+import base64
+# Read CWL file
+with open('path/to/process.cwl', 'r') as f:
+    cwl_content = f.read()
+# Base64 encode the content
+process_base64 = base64.b64encode(cwl_content.encode()).decode()
+# Pass process_base64 to your API
+# The API should then set this as the PROCESS variable in GitLab CI/CD
+```
+
+The pipeline will automatically decode the base64 content back to CWL format.
+
+Then set in GitLab CI/CD variables (typically via API):
+```yaml
+variables:
+  PROCESS: "Y3dsVmVyc2lvbjogdjEuMApjbGFzcz... (base64 encoded content)"
+```
+
+**Important**: Only provide ONE of `CWL_URL` or `PROCESS`. The pipeline will fail if both or neither are set.
+
 ## Runner Requirements
 
+### Build Pipeline Requirements
+
+- **docker** runners with Docker-in-Docker (dind) support
+- Access to Docker registry for pushing images
+- GitLab container registry credentials
+
+### Deployment Pipeline Requirements
 ### Build Pipeline Requirements
 
 - **docker** runners with Docker-in-Docker (dind) support
@@ -120,12 +246,23 @@ Configure these in your GitLab CI/CD settings:
 - **Manual and API-triggered pipelines** with rule-based execution
 
 ### Deployment Pipeline Features
+### Build Pipeline Features
+- **Automated Docker image building** from algorithm repositories
+- **Configurable base images** (default: condaforge/miniforge3)
+- **Shallow git cloning** for faster builds
+- **OGC CWL workflow generation** from algorithm configuration
+- **Automatic CWL publishing** to configured endpoints via GitLab API
+- **Manual and API-triggered pipelines** with rule-based execution
+
+### Deployment Pipeline Features
 - **OGC Application Package validation** using `ogc_ap_validator`
 - **Automated version extraction** from CWL `s:version` field
 - **Docker image retagging** and registry migration
 - **Digest-based push verification** with automatic retry on failure
+- **Digest-based push verification** with automatic retry on failure
 - **HySDS specification generation** via `hysds-ogc-container-builder`
 - **Self-contained deployment** with inline scripts for portability
+- **Absolute path handling** for reliable artifact passing between stages
 - **Absolute path handling** for reliable artifact passing between stages
 
 ## Performance Optimizations
@@ -136,9 +273,17 @@ Configure these in your GitLab CI/CD settings:
 - Early validation to fail fast on errors
 - Direct registry URLs instead of tar files for faster deployment
 - Optimized Docker digest comparison for reliable push verification
+- Optimized Docker digest comparison for reliable push verification
 
 ## Artifacts
 
+### Build Pipeline Artifacts
+
+- `image.env` - Dotenv artifact containing `FULLY_QUALIFIED_IMAGE_URL`
+- `cwl_workflows/*` - Generated CWL workflow files
+- `algo_config.yaml` - Parsed algorithm configuration in YAML format
+
+### Deployment Pipeline Artifacts
 ### Build Pipeline Artifacts
 
 - `image.env` - Dotenv artifact containing `FULLY_QUALIFIED_IMAGE_URL`
@@ -168,10 +313,144 @@ CWL files are renamed to: `${PROCESS_NAME_HYSDS}.${TAG}.process.cwl` where TAG i
 
 ### Deployment Pipeline Dependencies
 
+### Build Pipeline Dependencies
+
+- [ogc-app-pack-generator](https://github.com/MAAP-Project/ogc-app-pack-generator) - OGC CWL workflow generator
+- `condaforge/miniforge3:25.3.1-0` - Default base image
+- Docker registry v2
+- GitLab API for CWL file publishing
+
+### Deployment Pipeline Dependencies
+
 - [ogc_ap_validator](https://pypi.org/project/ogc-ap-validator/) v0.5.0 - OGC Application Package validation
 - [hysds-ogc-container-builder](https://github.com/MAAP-Project/hysds-ogc-container-builder) - HySDS specification generator
 - `hysds/verdi:v5.2.0` - HySDS deployment container
 - Docker registry v2
+
+## GitFlow Validation (GitHub Actions)
+
+The GitFlow validation workflow enforces standard GitFlow branching patterns on pull requests to maintain a consistent branching strategy across your repositories.
+
+### Features
+
+- **Automatic PR validation**: Runs automatically on pull request creation and updates
+- **GitFlow enforcement**: Validates source and target branch combinations against GitFlow rules
+- **Clear feedback**: Provides detailed error messages showing allowed branch combinations
+- **Reusable workflow**: Easily integrate into any GitHub repository
+- **Extensible**: Support for custom branch patterns (future enhancement)
+
+### Standard GitFlow Rules
+
+The workflow enforces these standard GitFlow patterns:
+
+| Source Branch | Target Branch | Purpose |
+|--------------|---------------|---------|
+| `feature/*` | `develop` | New features merge into development |
+| `bugfix/*` | `develop` | Bug fixes for next release |
+| `bugfix/*` | `release/*` | Bug fixes during release stabilization |
+| `develop` | `release/*` | Create new release from development |
+| `release/*` | `main` | Deploy stable release to production |
+| `release/*` | `develop` | Merge release changes back to development |
+| `hotfix/*` | `main` | Emergency fixes to production |
+| `main` | `develop` | Sync production hotfixes back to development |
+
+### Usage
+
+#### Basic Setup
+
+1. Create `.github/workflows/pr-validation.yml` in your repository:
+
+```yaml
+name: Pull Request Validation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  gitflow-validation:
+    name: Validate GitFlow Rules
+    uses: MAAP-Project/maap-ci-templates/.github/workflows/gitflow-validation.yml@main
+```
+
+2. Commit and push the workflow file
+3. All future pull requests will be validated automatically
+
+#### Using a Specific Version
+
+For production stability, pin to a specific version or tag:
+
+```yaml
+jobs:
+  gitflow-validation:
+    uses: MAAP-Project/maap-ci-templates/.github/workflows/gitflow-validation.yml@v1.0.0
+```
+
+#### Branch Protection Integration
+
+Combine with GitHub branch protection rules for maximum effectiveness:
+
+1. Go to your repository Settings → Branches
+2. Add branch protection rule for `main` and `develop`
+3. Enable "Require status checks to pass before merging"
+4. Select "Validate GitFlow Rules" as a required check
+
+This prevents merges that violate GitFlow rules.
+
+### Workflow Inputs
+
+The workflow supports optional configuration:
+
+```yaml
+jobs:
+  gitflow-validation:
+    uses: MAAP-Project/maap-ci-templates/.github/workflows/gitflow-validation.yml@main
+    with:
+      custom_allowed_patterns: |
+        - pattern: "custom/*"
+          target: "develop"
+```
+
+**Note**: Custom pattern support is reserved for future implementation.
+
+### Example Output
+
+**Successful validation:**
+```
+🔍 Validating PR: feature/add-user-auth → develop
+✅ Feature branch merging into develop — OK
+```
+
+**Failed validation:**
+```
+🔍 Validating PR: feature/add-user-auth → main
+❌ Invalid Git-Flow PR direction: feature/add-user-auth → main
+   Allowed combinations:
+   - feature/*  → develop
+   - bugfix/*   → develop
+   - bugfix/*   → release/*
+   - develop    → release/*
+   - release/*  → main
+   - release/*  → develop
+   - hotfix/*   → main
+   - main       → develop
+```
+
+### Troubleshooting
+
+**Workflow not running:**
+- Ensure the workflow file is in `.github/workflows/` directory
+- Verify the file has `.yml` or `.yaml` extension
+- Check that branch protection rules include the workflow as a required check
+
+**Validation failing unexpectedly:**
+- Verify your branch names match GitFlow patterns (e.g., `feature/my-feature`, not `features/my-feature`)
+- Check that source and target branches are correct in the PR
+- Review the workflow output for specific error messages
+
+**Custom patterns not working:**
+- Custom pattern support is planned for a future release
+- For now, only standard GitFlow patterns are enforced
 
 ## Recent Improvements
 
