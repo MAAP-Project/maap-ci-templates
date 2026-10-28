@@ -96,15 +96,55 @@ generate_ogc_app_pack:
     - export GIT_COMMIT_HASH="$(git ls-remote ${REPOSITORY_URL} "refs/heads/${BRANCH_REF}" "refs/tags/${BRANCH_REF}" | awk 'NR==1 {print $1}')"
     - python3 ogc-app-pack-generator/build_cwl_workflow.py --yaml-file algo_config.yaml --cwl-template-file ogc-app-pack-generator/templates/process.v1_2.cwl
     - |
+      # Publish process.cwl and capture commit SHA to prevent race conditions
       export PROCESS_CWL_FILE_B64=$(cat cwl_workflows/process.cwl | base64 -w 0)
-      status_code=$(curl -X POST -s -o /dev/null -w "%{http_code}" --location "${OGC_PROCESS_FILE_PUBLISH_URL}" -H "Content-Type: application/json" --header "PRIVATE-TOKEN: ${OGC_APP_PACK_WRITE_TOKEN}" --data-raw "{\"branch\": \"main\",\"author_email\": \"root@maap-project.org\",\"author_name\": \"Administrator\",\"commit_message\": \"Publish $IMAGE_NAME/$IMAGE_TAG/process.cwl\",\"encoding\": \"base64\",\"content\": \"$PROCESS_CWL_FILE_B64\"}")
+
+      # Try POST first (create new file) - capture response body AND status code
+      response=$(curl -X POST -s -w "\n%{http_code}" --location "${OGC_PROCESS_FILE_PUBLISH_URL}" \
+        -H "Content-Type: application/json" \
+        --header "PRIVATE-TOKEN: ${OGC_APP_PACK_WRITE_TOKEN}" \
+        --data-raw "{\"branch\": \"main\",\"author_email\": \"root@maap-project.org\",\"author_name\": \"Administrator\",\"commit_message\": \"Publish $IMAGE_NAME/$IMAGE_TAG/process.cwl\",\"encoding\": \"base64\",\"content\": \"$PROCESS_CWL_FILE_B64\"}")
+
+      # Extract status code (last line) and body (everything before)
+      status_code=$(echo "$response" | tail -n1)
+      response_body=$(echo "$response" | head -n-1)
+
       if [[ "$status_code" != "201" ]]; then
-        curl -X PUT --location "${OGC_PROCESS_FILE_PUBLISH_URL}" -H "Content-Type: application/json" --header "PRIVATE-TOKEN: ${OGC_APP_PACK_WRITE_TOKEN}" --data-raw "{\"branch\": \"main\",\"author_email\": \"root@maap-project.org\",\"author_name\": \"Administrator\",\"commit_message\": \"Publish $IMAGE_NAME/$IMAGE_TAG/process.cwl\",\"encoding\": \"base64\",\"content\": \"$PROCESS_CWL_FILE_B64\"}"
+        response=$(curl -X PUT -s -w "\n%{http_code}" --location "${OGC_PROCESS_FILE_PUBLISH_URL}" \
+          -H "Content-Type: application/json" \
+          --header "PRIVATE-TOKEN: ${OGC_APP_PACK_WRITE_TOKEN}" \
+          --data-raw "{\"branch\": \"main\",\"author_email\": \"root@maap-project.org\",\"author_name\": \"Administrator\",\"commit_message\": \"Publish $IMAGE_NAME/$IMAGE_TAG/process.cwl\",\"encoding\": \"base64\",\"content\": \"$PROCESS_CWL_FILE_B64\"}")
+
+        status_code=$(echo "$response" | tail -n1)
+        response_body=$(echo "$response" | head -n-1)
+
+        if [[ "$status_code" != "200" ]]; then
+          echo "ERROR: Failed to push process.cwl after trying POST then PUT. Status: $status_code"
+          echo "Response: $response_body"
+          exit 1
+        fi
       fi
+
+      # Extract commit SHA from GitLab API response (works for both POST 201 and PUT 200)
+      commit_sha=$(echo "$response_body" | grep -o '"commit_id":"[^"]*"' | cut -d'"' -f4)
+
+      # Always create commit.env file to prevent artifact errors
+      if [ -n "$commit_sha" ]; then
+        # Export as dotenv artifact so it's available in webhook payload
+        echo "OGC_PROCESS_FILE_COMMIT_SHA=$commit_sha" >> commit.env
+        echo "Captured commit SHA: $commit_sha"
+      else
+        # Create empty file so artifact doesn't fail
+        touch commit.env
+        echo "WARNING: Could not extract commit SHA - commit.env is empty"
+      fi
+
   artifacts:
     paths:
       - cwl_workflows/*
       - algo_config.yaml
+    reports:
+      dotenv: commit.env
   
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web"'
