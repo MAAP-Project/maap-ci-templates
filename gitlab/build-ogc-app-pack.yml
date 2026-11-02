@@ -105,9 +105,9 @@ generate_ogc_app_pack:
 
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web"'
-      when: always
+      when: on_success
     - if: '$CI_PIPELINE_SOURCE == "api"'
-      when: always
+      when: on_success
     - when: never
   tags:
     - docker
@@ -192,9 +192,9 @@ publish_ogc_process_file:
 
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web"'
-      when: always
+      when: on_success
     - if: '$CI_PIPELINE_SOURCE == "api"'
-      when: always
+      when: on_success
     - when: never
   tags:
     - docker
