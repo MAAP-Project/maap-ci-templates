@@ -170,6 +170,7 @@ publish_ogc_process_file:
         fi
       done
 
+      echo "$response_body"
       # Extract commit SHA from GitLab API response (works for both POST 201 and PUT 200)
       commit_sha=$(echo "$response_body" | grep -o '"commit_id":"[^"]*"' | cut -d'"' -f4)
 
