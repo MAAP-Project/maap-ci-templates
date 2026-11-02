@@ -60,8 +60,6 @@ build_image:
       when: always
     # Block push or any other source
     - when: never
-  tags:
-    - docker
 
 generate_ogc_app_pack:
   stage: generate
