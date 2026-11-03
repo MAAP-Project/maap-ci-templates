@@ -189,7 +189,7 @@ publish_ogc_process_file:
             echo "Retrying in ${RETRY_DELAY}s..."
             sleep $RETRY_DELAY
           else
-            echo "ERROR: All $MAX_RETRIES attempts failed. Giving up."
+            echo "ERROR: All $MAX_RETRIES attempts failed."
             exit 1
           fi
         fi
