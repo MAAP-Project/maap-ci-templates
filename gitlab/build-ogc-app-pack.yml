@@ -2,6 +2,26 @@ stages:
   - build
   - generate
 
+# The MAAP API sends REPOSITORY_URL with a credential placeholder for repos hosted on the MAAP
+# GitLab, e.g. https://maap-api-svc:${GITLAB_CLONE_TOKEN}@repo.maap-project.org/group/algo.git,
+# because anonymous clones are disabled there. GITLAB_CLONE_TOKEN is a masked project CI variable
+# holding the service account's read_repository PAT. The runner normally expands the placeholder
+# on its own; this step makes that explicit and fails fast if the token is missing.
+# External repos (github.com etc.) arrive without a placeholder and pass through untouched.
+.resolve_repository_url:
+  script:
+    - |
+      case "$REPOSITORY_URL" in
+        *'${GITLAB_CLONE_TOKEN}'*)
+          if [ -z "$GITLAB_CLONE_TOKEN" ]; then
+            echo "REPOSITORY_URL requires GITLAB_CLONE_TOKEN but the CI variable is not set" >&2
+            exit 1
+          fi
+          REPOSITORY_URL="$(printf '%s' "$REPOSITORY_URL" | sed "s|\${GITLAB_CLONE_TOKEN}|${GITLAB_CLONE_TOKEN}|g")"
+          export REPOSITORY_URL
+          ;;
+      esac
+
 build_image:
   stage: build
   image: docker:latest
@@ -14,6 +34,7 @@ build_image:
     - echo "IMAGE_TAG = $IMAGE_TAG"
     - export FULLY_QUALIFIED_IMAGE_URL="$OGC_APP_PACK_REGISTRY/$IMAGE_NAME:$IMAGE_TAG"
     - docker rmi ${FULLY_QUALIFIED_IMAGE_URL} || true
+    - !reference [.resolve_repository_url, script]
     - |
       cat > Dockerfile <<'DOCKERFILE_EOF'
       ARG BASE_IMAGE_NAME=condaforge/miniforge3:25.3.1-0
@@ -30,7 +51,10 @@ build_image:
 
       WORKDIR /app
 
-      RUN git clone --depth 1 --single-branch --branch ${BRANCH_REF} ${REPOSITORY_URL}
+      # Clone, then drop any credential from the remote URL so it is not left in .git/config
+      RUN git clone --depth 1 --single-branch --branch ${BRANCH_REF} ${REPOSITORY_URL} && \
+          cd "$(basename "${REPOSITORY_URL}" .git)" && \
+          git remote set-url origin "$(printf '%s' "${REPOSITORY_URL}" | sed -E 's#//[^@/]+@#//#')"
       RUN bash ${BUILD_CMD} && conda clean -afy
 
       CMD ["/bin/bash"]
@@ -59,8 +83,6 @@ build_image:
       when: always
     # Block push or any other source
     - when: never
-  tags:
-    - docker
 
 generate_ogc_app_pack:
   stage: generate
@@ -93,6 +115,7 @@ generate_ogc_app_pack:
           yaml.dump(data, f)
       EOF
     - export DOCKER_TAG=$FULLY_QUALIFIED_IMAGE_URL
+    - !reference [.resolve_repository_url, script]
     - export GIT_COMMIT_HASH="$(git ls-remote ${REPOSITORY_URL} "refs/heads/${BRANCH_REF}" "refs/tags/${BRANCH_REF}" | awk 'NR==1 {print $1}')"
     - python3 ogc-app-pack-generator/build_cwl_workflow.py --yaml-file algo_config.yaml --cwl-template-file ogc-app-pack-generator/templates/process.v1_2.cwl
     - |
