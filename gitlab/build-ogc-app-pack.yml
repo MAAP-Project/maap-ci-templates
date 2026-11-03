@@ -170,25 +170,6 @@ publish_ogc_process_file:
         fi
       done
 
-      echo "$response_body"
-      # Extract commit SHA from GitLab API response (works for both POST 201 and PUT 200)
-      commit_sha=$(echo "$response_body" | grep -o '"commit_id":"[^"]*"' | cut -d'"' -f4)
-
-      # Always create commit.env file to prevent artifact errors
-      if [ -n "$commit_sha" ]; then
-        # Export as dotenv artifact so it's available in webhook payload
-        echo "OGC_PROCESS_FILE_COMMIT_SHA=$commit_sha" >> commit.env
-        echo "Successfully published process.cwl with commit SHA: $commit_sha"
-      else
-        # Create empty file so artifact doesn't fail
-        touch commit.env
-        echo "WARNING: Could not extract commit SHA - commit.env is empty"
-      fi
-
-  artifacts:
-    reports:
-      dotenv: commit.env
-
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: on_success
