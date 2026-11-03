@@ -10,6 +10,20 @@ cache:
   paths:
     - .cache/pip
 
+# Name the pipeline after the process being deployed. PROCESS_NAME_HYSDS is sent
+# by the MAAP API when it triggers the pipeline ({metadata_id}_{uuid}). Fall back
+# to the default name for manual runs that do not set it. Both rules are
+# unconditional on branch so this does not change which pipelines get created.
+workflow:
+  rules:
+    - if: $PROCESS_NAME_HYSDS
+      variables:
+        PIPELINE_NAME: "deploy-ogc $PROCESS_NAME_HYSDS"
+    - when: always
+      variables:
+        PIPELINE_NAME: "deploy-ogc"
+  name: $PIPELINE_NAME
+
 stages:
   - validate
   - download_artifacts
@@ -156,9 +170,12 @@ download:
 
 generate_hysds_specs:
   stage: convert_to_hysds
+  # Both jobs ship workspace/$CWL_FILE_NAME and which copy wins on extraction is
+  # not reliable, so this job rewrites dockerPull itself (see script below)
+  # instead of relying on the copy produced by `download`.
   dependencies:
-    - download
     - validate
+    - download
   image: python:3.12
   before_script:
     # Check artifacts exist
@@ -170,6 +187,31 @@ generate_hysds_specs:
   script:
     - pip install awscli
     - export CONTAINER_URL=$(cat ${CI_PROJECT_DIR}/workspace/docker_url.txt)
+    # Rewrite dockerPull to the DPS registry image here. The CWL in workspace/ may be
+    # the original (from validate) or the rewritten one (from download), depending on
+    # artifact extraction, so this step is idempotent and handles both.
+    - |
+      CWL_PATH="${CI_PROJECT_DIR}/workspace/$CWL_FILE_NAME"
+      ORIGINAL_IMAGE=$(grep 'dockerPull:' "$CWL_PATH" | awk '{print $2}' | head -n 1)
+      if [ -z "$ORIGINAL_IMAGE" ]; then
+        echo "ERROR: Failed to extract dockerPull from $CWL_FILE_NAME"
+        exit 1
+      fi
+      if [ "$ORIGINAL_IMAGE" != "$CONTAINER_URL" ]; then
+        echo "Replacing dockerPull $ORIGINAL_IMAGE with $CONTAINER_URL"
+        ESCAPED_IMAGE=$(printf '%s' "$ORIGINAL_IMAGE" | sed 's/[][\.*^$|/]/\\&/g')
+        ESCAPED_URL=$(printf '%s' "$CONTAINER_URL" | sed 's/[&|\\]/\\&/g')
+        sed -i -E "s|dockerPull:[[:space:]]*${ESCAPED_IMAGE}[[:space:]]*$|dockerPull: ${ESCAPED_URL}|" "$CWL_PATH"
+      else
+        echo "dockerPull already set to $CONTAINER_URL"
+      fi
+    # Guard: fail rather than upload a CWL that does not reference the DPS registry image
+    - |
+      CWL_DOCKER_PULL=$(grep 'dockerPull:' "$CWL_PATH" | awk '{print $2}' | head -n 1)
+      if [ "$CWL_DOCKER_PULL" != "$CONTAINER_URL" ]; then
+        echo "ERROR: dockerPull in $CWL_FILE_NAME ($CWL_DOCKER_PULL) does not match DPS registry image ($CONTAINER_URL)."
+        exit 1
+      fi
     - echo "Uploading $CWL_FILE_NAME to S3 bucket $S3_BUCKET"
     - aws s3 cp "${CI_PROJECT_DIR}/workspace/$CWL_FILE_NAME" "s3://$S3_BUCKET/ogc-app-pack/$CWL_FILE_NAME"
     - CWL_FILE_URI="s3://$S3_BUCKET/ogc-app-pack/$CWL_FILE_NAME"
