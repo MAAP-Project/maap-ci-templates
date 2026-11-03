@@ -10,6 +10,20 @@ cache:
   paths:
     - .cache/pip
 
+# Name the pipeline after the process being deployed. PROCESS_NAME_HYSDS is sent
+# by the MAAP API when it triggers the pipeline ({metadata_id}_{uuid}). Fall back
+# to the default name for manual runs that do not set it. Both rules are
+# unconditional on branch so this does not change which pipelines get created.
+workflow:
+  rules:
+    - if: $PROCESS_NAME_HYSDS
+      variables:
+        PIPELINE_NAME: "deploy-ogc $PROCESS_NAME_HYSDS"
+    - when: always
+      variables:
+        PIPELINE_NAME: "deploy-ogc"
+  name: $PIPELINE_NAME
+
 stages:
   - validate
   - download_artifacts
