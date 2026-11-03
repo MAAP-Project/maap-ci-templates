@@ -156,9 +156,13 @@ download:
 
 generate_hysds_specs:
   stage: convert_to_hysds
+  # Order matters: artifacts are extracted in list order and later jobs overwrite
+  # earlier ones. Both jobs ship workspace/$CWL_FILE_NAME, so `download` (which
+  # rewrites dockerPull to the DPS registry) must come last or the original CWL
+  # from `validate` clobbers it.
   dependencies:
-    - download
     - validate
+    - download
   image: python:3.12
   before_script:
     # Check artifacts exist
@@ -170,6 +174,14 @@ generate_hysds_specs:
   script:
     - pip install awscli
     - export CONTAINER_URL=$(cat ${CI_PROJECT_DIR}/workspace/docker_url.txt)
+    # Guard: the CWL must reference the DPS registry image before it is uploaded to S3
+    - |
+      CWL_DOCKER_PULL=$(grep 'dockerPull:' "${CI_PROJECT_DIR}/workspace/$CWL_FILE_NAME" | awk '{print $2}' | head -n 1)
+      if [ "$CWL_DOCKER_PULL" != "$CONTAINER_URL" ]; then
+        echo "ERROR: dockerPull in $CWL_FILE_NAME ($CWL_DOCKER_PULL) does not match DPS registry image ($CONTAINER_URL)."
+        echo "The CWL from the download stage was likely overwritten by another artifact."
+        exit 1
+      fi
     - echo "Uploading $CWL_FILE_NAME to S3 bucket $S3_BUCKET"
     - aws s3 cp "${CI_PROJECT_DIR}/workspace/$CWL_FILE_NAME" "s3://$S3_BUCKET/ogc-app-pack/$CWL_FILE_NAME"
     - CWL_FILE_URI="s3://$S3_BUCKET/ogc-app-pack/$CWL_FILE_NAME"
