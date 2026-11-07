@@ -149,7 +149,7 @@ publish_ogc_process_file:
       # Publish process.cwl with retry logic to handle transient failures
       export PROCESS_CWL_FILE_B64=$(cat cwl_workflows/process.cwl | base64 -w 0)
 
-      MAX_RETRIES=2
+      MAX_RETRIES=3
       RETRY_DELAY=2
 
       for attempt in $(seq 1 $MAX_RETRIES); do
@@ -166,7 +166,7 @@ publish_ogc_process_file:
         response_body=$(echo "$response" | head -n-1)
 
         if [[ "$status_code" != "201" ]]; then
-          echo "POST failed with status $status_code, trying PUT..."
+          echo "POST failed with status $status_code and response body $response_body, trying PUT..."
           response=$(curl -X PUT -s -w "\n%{http_code}" --location "${OGC_PROCESS_FILE_PUBLISH_URL}" \
             -H "Content-Type: application/json" \
             --header "PRIVATE-TOKEN: ${OGC_APP_PACK_WRITE_TOKEN}" \
