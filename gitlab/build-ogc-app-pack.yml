@@ -137,10 +137,10 @@ generate_ogc_app_pack:
 
 publish_ogc_process_file:
   stage: publish
-  image: curlimages/curl:8.23.0
+  image: alpine:latest
   dependencies:
     - generate_ogc_app_pack
-  timeout: 5 minutes
+  timeout: 7 minutes
   before_script:
     - apk add --no-cache curl bash
   script:
