@@ -89,6 +89,7 @@ generate_ogc_app_pack:
   image: python:3.12
   dependencies:
     - build_image
+  timeout: 7 minutes
   script:
     - echo "Generating OGC application package for image $FULLY_QUALIFIED_IMAGE_URL"
     - git clone https://github.com/MAAP-Project/ogc-app-pack-generator.git
@@ -118,22 +119,65 @@ generate_ogc_app_pack:
     - !reference [.resolve_repository_url, script]
     - export GIT_COMMIT_HASH="$(git ls-remote ${REPOSITORY_URL} "refs/heads/${BRANCH_REF}" "refs/tags/${BRANCH_REF}" | awk 'NR==1 {print $1}')"
     - python3 ogc-app-pack-generator/build_cwl_workflow.py --yaml-file algo_config.yaml --cwl-template-file ogc-app-pack-generator/templates/process.v1_2.cwl
+    - echo "CWL file generated successfully at cwl_workflows/process.cwl"
     - |
+      # Publish process.cwl with retry logic to handle transient failures
       export PROCESS_CWL_FILE_B64=$(cat cwl_workflows/process.cwl | base64 -w 0)
-      status_code=$(curl -X POST -s -o /dev/null -w "%{http_code}" --location "${OGC_PROCESS_FILE_PUBLISH_URL}" -H "Content-Type: application/json" --header "PRIVATE-TOKEN: ${OGC_APP_PACK_WRITE_TOKEN}" --data-raw "{\"branch\": \"main\",\"author_email\": \"root@maap-project.org\",\"author_name\": \"Administrator\",\"commit_message\": \"Publish $IMAGE_NAME/$IMAGE_TAG/process.cwl\",\"encoding\": \"base64\",\"content\": \"$PROCESS_CWL_FILE_B64\"}")
-      if [[ "$status_code" != "201" ]]; then
-        curl -X PUT --location "${OGC_PROCESS_FILE_PUBLISH_URL}" -H "Content-Type: application/json" --header "PRIVATE-TOKEN: ${OGC_APP_PACK_WRITE_TOKEN}" --data-raw "{\"branch\": \"main\",\"author_email\": \"root@maap-project.org\",\"author_name\": \"Administrator\",\"commit_message\": \"Publish $IMAGE_NAME/$IMAGE_TAG/process.cwl\",\"encoding\": \"base64\",\"content\": \"$PROCESS_CWL_FILE_B64\"}"
-      fi
+
+      MAX_RETRIES=3
+      RETRY_DELAY=2
+
+      for attempt in $(seq 1 $MAX_RETRIES); do
+        echo "Attempt $attempt of $MAX_RETRIES..."
+
+        # Try POST first (create new file) - capture response body AND status code
+        response=$(curl -X POST -s -w "\n%{http_code}" --location "${OGC_PROCESS_FILE_PUBLISH_URL}" \
+          -H "Content-Type: application/json" \
+          --header "PRIVATE-TOKEN: ${OGC_APP_PACK_WRITE_TOKEN}" \
+          --data-raw "{\"branch\": \"main\",\"author_email\": \"root@maap-project.org\",\"author_name\": \"Administrator\",\"commit_message\": \"Publish $IMAGE_NAME/$IMAGE_TAG/process.cwl\",\"encoding\": \"base64\",\"content\": \"$PROCESS_CWL_FILE_B64\"}")
+
+        # Extract status code (last line) and body (everything before)
+        status_code=$(echo "$response" | tail -n1)
+        response_body=$(echo "$response" | head -n-1)
+
+        if [[ "$status_code" != "201" ]]; then
+          echo "POST failed with status $status_code and response $response_body, trying PUT..."
+          response=$(curl -X PUT -s -w "\n%{http_code}" --location "${OGC_PROCESS_FILE_PUBLISH_URL}" \
+            -H "Content-Type: application/json" \
+            --header "PRIVATE-TOKEN: ${OGC_APP_PACK_WRITE_TOKEN}" \
+            --data-raw "{\"branch\": \"main\",\"author_email\": \"root@maap-project.org\",\"author_name\": \"Administrator\",\"commit_message\": \"Publish $IMAGE_NAME/$IMAGE_TAG/process.cwl\",\"encoding\": \"base64\",\"content\": \"$PROCESS_CWL_FILE_B64\"}")
+
+          status_code=$(echo "$response" | tail -n1)
+          response_body=$(echo "$response" | head -n-1)
+        fi
+
+        # Check if successful
+        if [[ "$status_code" == "200" ]] || [[ "$status_code" == "201" ]]; then
+          echo "Successfully published process.cwl with status $status_code"
+          break
+        else
+          echo "Attempt $attempt failed with status $status_code and response $response_body"
+
+          if [[ $attempt -lt $MAX_RETRIES ]]; then
+            echo "Retrying in ${RETRY_DELAY}s..."
+            sleep $RETRY_DELAY
+          else
+            echo "ERROR: All $MAX_RETRIES attempts failed."
+            exit 1
+          fi
+        fi
+      done
+
   artifacts:
     paths:
       - cwl_workflows/*
       - algo_config.yaml
-  
+
   rules:
     - if: '$CI_PIPELINE_SOURCE == "web"'
-      when: always
+      when: on_success
     - if: '$CI_PIPELINE_SOURCE == "api"'
-      when: always
+      when: on_success
     - when: never
   tags:
     - docker
