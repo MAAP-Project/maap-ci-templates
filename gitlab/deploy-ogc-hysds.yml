@@ -101,7 +101,7 @@ download:
         else
           echo "Starting new Docker registry on port 5000..."
           docker run -p 5050:5000 -e REGISTRY_STORAGE=s3 -e REGISTRY_STORAGE_S3_BUCKET="${MAAP_CODE_BUCKET}" \
-                    -e REGISTRY_STORAGE_S3_REGION="${S3_REGION}" --name=registry -d --restart=always registry:2
+                    -e REGISTRY_STORAGE_S3_REGION="${S3_REGION}" --name=registry -d --restart=always registry:3
         fi
       else
         echo "Docker registry is already running."
