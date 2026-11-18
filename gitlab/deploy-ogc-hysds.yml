@@ -101,7 +101,7 @@ download:
         else
           echo "Starting new Docker registry on port 5000..."
           docker run -p 5050:5000 -e REGISTRY_STORAGE=s3 -e REGISTRY_STORAGE_S3_BUCKET="${MAAP_CODE_BUCKET}" \
-                    -e REGISTRY_STORAGE_S3_REGION="${S3_REGION}" --name=registry -d --restart=always registry:2
+                    -e REGISTRY_STORAGE_S3_REGION="${S3_REGION}" --name=registry -d --restart=always registry:3
         fi
       else
         echo "Docker registry is already running."
@@ -116,8 +116,30 @@ download:
         exit 1
       fi
     - echo "Docker image found $DOCKER_IMAGE"
+    # Log in to the image's registry if it is a private MAAP registry. Self-hosted runners have no stored
+    # docker login, so without this the pull fails with "pull access denied". The login goes to a per-job
+    # DOCKER_CONFIG (removed in after_script) so no credential is left on the runner host.
+    - |
+      IMAGE_HOST="${DOCKER_IMAGE%%/*}"
+      PRIVATE_HOST="${MAAP_PRIVATE_DOCKER_REGISTRY#*://}"
+      PRIVATE_HOST="${PRIVATE_HOST%%/*}"
+      export DOCKER_CONFIG="$CI_PROJECT_DIR/.docker-login"
+      mkdir -p "$DOCKER_CONFIG"
+      if [ -n "${MAAP_PRIVATE_REGISTRY_TOKEN:-}" ] && [ "$IMAGE_HOST" = "$PRIVATE_HOST" ]; then
+        echo "Logging in to $IMAGE_HOST with MAAP_PRIVATE_REGISTRY_TOKEN"
+        echo "$MAAP_PRIVATE_REGISTRY_TOKEN" | docker login "$IMAGE_HOST" -u gitlab-ci-token --password-stdin
+      elif [ -n "${CI_REGISTRY:-}" ] && [ "$IMAGE_HOST" = "$CI_REGISTRY" ]; then
+        echo "Logging in to $IMAGE_HOST with CI_JOB_TOKEN"
+        echo "$CI_JOB_TOKEN" | docker login "$IMAGE_HOST" -u gitlab-ci-token --password-stdin
+      else
+        echo "No registry login configured for $IMAGE_HOST (pulling anonymously)"
+      fi
     # Pull and retag Docker image
-    - docker pull "$DOCKER_IMAGE"
+    - |
+      if ! docker pull "$DOCKER_IMAGE"; then
+        echo "ERROR: could not pull $DOCKER_IMAGE. If it is a private image, set MAAP_PRIVATE_DOCKER_REGISTRY=$IMAGE_HOST and MAAP_PRIVATE_REGISTRY_TOKEN (a token with read_registry on the image's project), or allow this project in the image project's CI job token allowlist."
+        exit 1
+      fi
     - NEW_IMAGE_NAME=$(echo "$DOCKER_IMAGE" | sed -E 's|^([^/:]+[.][^/]+)/||')
     - docker rmi "$DPS_REGISTRY/$NEW_IMAGE_NAME" || true
     - docker tag "$DOCKER_IMAGE" "$DPS_REGISTRY/$NEW_IMAGE_NAME"
@@ -160,6 +182,8 @@ download:
     - sed -i -E "s|dockerPull:\ *$DOCKER_IMAGE|dockerPull:\ $DPS_REGISTRY/$NEW_IMAGE_NAME|" "workspace/$CWL_FILE_NAME"
     # Save artifact metadata
     - echo "$DPS_REGISTRY/$NEW_IMAGE_NAME" | tee workspace/docker_url.txt
+  after_script:
+    - rm -rf "$CI_PROJECT_DIR/.docker-login"
   artifacts:
     paths:
       - workspace/
