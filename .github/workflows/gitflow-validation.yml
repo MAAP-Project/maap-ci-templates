@@ -30,11 +30,11 @@ jobs:
           if [[ "$SOURCE" == feature/* && "$TARGET" == "develop" ]]; then
             echo "✅ Feature branch merging into develop — OK"
             exit 0
-          elif [[ "$SOURCE" == bugfix/* && "$TARGET" == "develop" ]]; then
-            echo "✅ Bugfix branch merging into develop — OK"
+          elif [[ ( "$SOURCE" == bugfix/* || "$SOURCE" == fix/* ) && "$TARGET" == "develop" ]]; then
+            echo "✅ Bugfix (bugfix/* or fix/*) branch merging into develop — OK"
             exit 0
-          elif [[ "$SOURCE" == bugfix/* && "$TARGET" == release/* ]]; then
-            echo "✅ Bugfix branch merging into release — OK"
+          elif [[ ( "$SOURCE" == bugfix/* || "$SOURCE" == fix/* ) && "$TARGET" == release/* ]]; then
+            echo "✅ Bugfix (bugfix/* or fix/*) branch merging into release — OK"
             exit 0
           elif [[ "$SOURCE" == "develop" && "$TARGET" == release/* ]]; then
             echo "✅ Develop merging into release — OK"
@@ -55,8 +55,8 @@ jobs:
             echo "❌ Invalid Git-Flow PR direction: $SOURCE → $TARGET"
             echo "   Allowed combinations:"
             echo "   - feature/*  → develop"
-            echo "   - bugfix/*   → develop"
-            echo "   - bugfix/*   → release/*"
+            echo "   - bugfix/*, fix/* → develop"
+            echo "   - bugfix/*, fix/* → release/*"
             echo "   - develop    → release/*"
             echo "   - release/*  → main"
             echo "   - release/*  → develop"

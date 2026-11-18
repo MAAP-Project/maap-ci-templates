@@ -66,7 +66,7 @@ jobs:
 
 This workflow enforces standard GitFlow branching patterns:
 - `feature/*` → `develop`
-- `bugfix/*` → `develop` or `release/*`
+- `bugfix/*` or `fix/*` → `develop` or `release/*`
 - `develop` → `release/*`
 - `release/*` → `main` or `develop`
 - `hotfix/*` → `main`
@@ -346,8 +346,8 @@ The workflow enforces these standard GitFlow patterns:
 | Source Branch | Target Branch | Purpose |
 |--------------|---------------|---------|
 | `feature/*` | `develop` | New features merge into development |
-| `bugfix/*` | `develop` | Bug fixes for next release |
-| `bugfix/*` | `release/*` | Bug fixes during release stabilization |
+| `bugfix/*`, `fix/*` | `develop` | Bug fixes for next release |
+| `bugfix/*`, `fix/*` | `release/*` | Bug fixes during release stabilization |
 | `develop` | `release/*` | Create new release from development |
 | `release/*` | `main` | Deploy stable release to production |
 | `release/*` | `develop` | Merge release changes back to development |
@@ -427,8 +427,8 @@ jobs:
 ❌ Invalid Git-Flow PR direction: feature/add-user-auth → main
    Allowed combinations:
    - feature/*  → develop
-   - bugfix/*   → develop
-   - bugfix/*   → release/*
+   - bugfix/*, fix/* → develop
+   - bugfix/*, fix/* → release/*
    - develop    → release/*
    - release/*  → main
    - release/*  → develop
