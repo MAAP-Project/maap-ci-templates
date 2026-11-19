@@ -220,6 +220,8 @@ variables:
 ### Build Pipeline Requirements
 
 - **docker** runners with Docker-in-Docker (dind) support
+  - `privileged = true` in `[runners.docker]`
+  - `"/certs/client"` in `volumes` (for example `volumes = ["/certs/client", "/cache"]`). `build_image` talks to dind over TLS on port 2376; dind generates its own certificates and the runner shares them with the job through this volume. No certificates need to be supplied.
 - Access to Docker registry for pushing images
 - GitLab container registry credentials
 
@@ -227,6 +229,8 @@ variables:
 ### Build Pipeline Requirements
 
 - **docker** runners with Docker-in-Docker (dind) support
+  - `privileged = true` in `[runners.docker]`
+  - `"/certs/client"` in `volumes` (for example `volumes = ["/certs/client", "/cache"]`). `build_image` talks to dind over TLS on port 2376; dind generates its own certificates and the runner shares them with the job through this volume. No certificates need to be supplied.
 - Access to Docker registry for pushing images
 - GitLab container registry credentials
 

@@ -24,10 +24,34 @@ stages:
 
 build_image:
   stage: build
-  image: docker:latest
+  # Pin the client and the dind service to the same major version. docker:latest / docker:dind
+  # move on their own and the newest dind releases drop support for unauthenticated TCP (2375).
+  image: docker:27
   services:
-    - docker:dind
+    - name: docker:27-dind
+      alias: docker
+  variables:
+    # Docker-in-Docker over TLS. dind generates its own certificates and writes them to
+    # /certs/client; the runner must mount /certs/client (volumes = ["/certs/client", "/cache"]
+    # in [runners.docker]) so the job container can read them. No certificates need to be supplied.
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: "/certs/client"
   before_script:
+    # dind takes several seconds to start (16-19 s measured on the plain-TCP image) and the runner's
+    # service health check does not always wait for it, so the first docker command can fail with
+    # "Cannot connect to the Docker daemon at tcp://docker:2376". Wait for the daemon (up to 120 s).
+    - |
+      i=0
+      until docker info >/dev/null 2>&1; do
+        i=$((i + 1))
+        if [ "$i" -gt 60 ]; then
+          echo "Docker daemon not reachable after 120 s" >&2
+          exit 1
+        fi
+        sleep 2
+      done
     - echo "$OGC_APP_PACK_DEPLOY_TOKEN" | docker login -u ogc-app-pack-deploy --password-stdin $CI_REGISTRY
   script:
     - echo "IMAGE_NAME = $IMAGE_NAME"
